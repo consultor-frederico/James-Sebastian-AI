@@ -20,7 +20,6 @@ st.set_page_config(
 )
 
 # --- INICIALIZAÇÃO DE ESTADO (SESSION STATE) ---
-# Inicializa variáveis para não perderem valor ao recarregar a tela
 campos_padrao = {
     'valor_financiado': 305000.00,
     'prazo_meses': 360,
@@ -58,10 +57,7 @@ def obter_indices_bacen():
         return None
 
 def extrair_dados_ia(conteudo, tipo_arquivo):
-    """
-    Função Universal: Aceita Texto (do PDF) ou Imagem (do JPG)
-    e envia para o Gemini extrair os dados.
-    """
+    """Extrai dados via Gemini (Texto ou Imagem)"""
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-1.5-flash')
@@ -80,13 +76,10 @@ def extrair_dados_ia(conteudo, tipo_arquivo):
         """
 
         if tipo_arquivo == 'imagem':
-            # Para imagens, passamos o objeto imagem direto + prompt
             response = model.generate_content([prompt_texto, conteudo])
         else:
-            # Para texto (PDF), passamos o texto montado
             response = model.generate_content(prompt_texto + f"\n\nTexto do Documento:\n{conteudo[:20000]}")
 
-        # Limpeza do JSON
         json_str = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(json_str)
 
@@ -128,7 +121,7 @@ def gerar_laudo_final(dados):
         - DIFERENÇA A RECUPERAR: R$ {dados['diferenca']}
         
         ESCREVA OS TÓPICOS:
-        1. Identificação (Use os dados da qualificação acima).
+        1. Identificação.
         2. Do Objeto (Revisão de contrato habitacional).
         3. Da Metodologia (Recálculo linear expurgando anatocismo - Súmula 121 STF).
         4. Dos Quesitos e Constatações (Explique o dano financeiro).
@@ -143,7 +136,7 @@ def gerar_laudo_final(dados):
 st.title("⚖️ James Sebastian AI - Auditoria Contratual")
 st.markdown("**Sistema Integrado:** PDF/Imagem -> OCR IA -> Laudo Jurídico")
 
-# --- BARRA LATERAL (UPLOAD E DADOS) ---
+# --- BARRA LATERAL ---
 with st.sidebar:
     st.header("1. Upload de Documentos")
     st.info("Suba fotos (JPG) ou arquivos (PDF) do contrato/extrato.")
@@ -154,17 +147,14 @@ with st.sidebar:
         with st.spinner("A IA está lendo o documento..."):
             dados_extraidos = None
             
-            # Lógica de decisão: Imagem vs PDF
             if arquivo.type == "application/pdf":
                 texto_pdf = ler_pdf(arquivo)
                 if texto_pdf:
                     dados_extraidos = extrair_dados_ia(texto_pdf, 'texto')
             else:
-                # É imagem (JPG/PNG)
                 imagem = Image.open(arquivo)
                 dados_extraidos = extrair_dados_ia(imagem, 'imagem')
             
-            # Preencher campos se sucesso
             if dados_extraidos:
                 st.session_state.nome_cliente = dados_extraidos.get('nomes', 'Não Identificado')
                 st.session_state.nome_banco = dados_extraidos.get('banco', 'Instituição Financeira')
@@ -185,7 +175,6 @@ with st.sidebar:
 
     st.divider()
     st.header("2. Dados Identificados")
-    # Campos editáveis (preenchidos pela IA ou manual)
     st.session_state.nome_cliente = st.text_input("Nome do Mutuário", st.session_state.nome_cliente)
     st.session_state.nome_banco = st.text_input("Banco", st.session_state.nome_banco)
     st.session_state.numero_contrato = st.text_input("Nº Contrato", st.session_state.numero_contrato)
@@ -202,7 +191,6 @@ with st.sidebar:
 
 # --- CORPO PRINCIPAL ---
 
-# 1. Indicadores
 indices = obter_indices_bacen()
 if indices:
     c1, c2, c3 = st.columns(3)
@@ -212,30 +200,25 @@ if indices:
 
 st.divider()
 
-# 2. Cálculos (Core)
 def calcular_cenarios(valor, meses, taxa, ocr, v_inc):
-    # SAC Puro
     taxa_mes = (1 + taxa/100)**(1/12) - 1
     amort = valor / meses
     saldo = valor
     dados_sac = []
     
-    # Banco Viciado
     saldo_banco = valor
     dados_banco = []
     indices_fraude = np.linspace(10, meses-10, ocr, dtype=int) if ocr > 0 else []
 
     for i in range(1, meses + 1):
-        # Calc SAC
         juros_sac = saldo * taxa_mes
         saldo -= amort
         if saldo < 0: saldo = 0
         dados_sac.append(saldo)
         
-        # Calc Banco
         amort_banco = valor / meses
         if i in indices_fraude:
-            saldo_banco += v_inc # Incorporação
+            saldo_banco += v_inc
         else:
             saldo_banco -= amort_banco
         if saldo_banco < 0: saldo_banco = 0
@@ -248,13 +231,12 @@ df = calcular_cenarios(st.session_state.valor_financiado,
                        st.session_state.juros_anuais, 
                        ocorrencias, valor_inc)
 
-# Pega saldo final simulado (aprox mês 60 ou atual)
 mes_atual = min(60, st.session_state.prazo_meses)
 s_banco = df.iloc[mes_atual-1]['Banco']
 s_sac = df.iloc[mes_atual-1]['SAC']
 dif = s_banco - s_sac
 
-# 3. Visualização e Laudo
+# --- ABAS DE RESULTADOS ---
 tab1, tab2 = st.tabs(["📊 Gráficos e Números", "⚖️ Laudo Pericial Pronto"])
 
 with tab1:
@@ -269,4 +251,23 @@ with tab1:
     st.plotly_chart(fig, use_container_width=True)
 
 with tab2:
-    st.subheader("Gerador de La
+    st.subheader("Gerador de Laudo Automático")
+    st.write("A IA usará os dados extraídos do documento para redigir o laudo.")
+    
+    if st.button("📝 Gerar Laudo Jurídico"):
+        with st.spinner("Redigindo documento forense..."):
+            dados_laudo = {
+                'nome_cliente': st.session_state.nome_cliente,
+                'nome_banco': st.session_state.nome_banco,
+                'numero_contrato': st.session_state.numero_contrato,
+                'valor_financiado': f"{st.session_state.valor_financiado:,.2f}",
+                'prazo_meses': st.session_state.prazo_meses,
+                'juros_anuais': st.session_state.juros_anuais,
+                'ocorrencias': ocorrencias,
+                'saldo_banco': f"{s_banco:,.2f}",
+                'saldo_justo': f"{s_sac:,.2f}",
+                'diferenca': f"{dif:,.2f}"
+            }
+            texto = gerar_laudo_final(dados_laudo)
+            st.markdown(texto)
+            st.download_button("Baixar Laudo (.txt)", texto, f"Laudo_{st.session_state.nome_cliente}.txt")
