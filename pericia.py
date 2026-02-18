@@ -56,30 +56,67 @@ def obter_indices_bacen():
     except:
         return None
 
-def extrair_dados_ia(conteudo, tipo_arquivo):
-    """Extrai dados via Gemini (Texto ou Imagem)"""
+def ler_pdf(file):
+    """Extrai texto de um PDF"""
+    texto = ""
+    try:
+        with pdfplumber.open(file) as pdf:
+            for page in pdf.pages:
+                texto += page.extract_text() or ""
+        return texto
+    except Exception as e:
+        return f"Erro ao ler PDF: {e}"
+
+def extrair_dados_multiplos(arquivos):
+    """
+    Processa uma LISTA de arquivos (PDFs e Imagens),
+    junta tudo e manda para o Gemini extrair os dados.
+    """
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-1.5-flash')
         
-        prompt_texto = """
-        Atue como um especialista em extração de dados bancários. Analise este documento e retorne um JSON estrito.
-        Extraia:
-        1. "banco": (Nome do Banco/Instituição)
+        # 1. Preparar o Prompt
+        prompt_sistema = """
+        Você é um perito assistente especialista em auditoria bancária.
+        Analise o conjunto de documentos fornecidos (Contratos, Extratos, Fotos) e extraia os dados consolidados.
+        
+        RETORNE APENAS UM JSON (sem markdown) com estas chaves:
+        1. "banco": (Nome da Instituição Financeira)
         2. "contrato": (Número do contrato)
         3. "nomes": (Nome do mutuário/devedor principal)
-        4. "valor_financiado": (float, valor da dívida/compra e venda)
-        5. "prazo_meses": (int, total de parcelas)
-        6. "taxa_juros_anual": (float, taxa nominal anual - procure por 'Nominal' ou 'Efetiva')
+        4. "valor_financiado": (float, valor original da dívida/compra e venda - use ponto para decimais)
+        5. "prazo_meses": (int, prazo total em meses)
+        6. "taxa_juros_anual": (float, taxa de juros nominal anual. Se houver Nominal e Efetiva, prefira a Nominal)
 
-        Se não achar algo, coloque null ou 0. Retorne APENAS o JSON.
+        Se houver divergência entre documentos, priorize o "Contrato de Financiamento" para taxas e prazos.
+        Se não encontrar algum dado, coloque null ou 0.
         """
+        
+        conteudo_ia = [prompt_sistema]
+        texto_acumulado = ""
+        
+        # 2. Iterar sobre os arquivos e preparar o payload
+        for arq in arquivos:
+            # Se for PDF -> Extrai texto
+            if arq.type == "application/pdf":
+                texto = ler_pdf(arq)
+                texto_acumulado += f"\n--- Conteúdo do arquivo {arq.name} ---\n{texto}\n"
+            
+            # Se for Imagem -> Adiciona a imagem direta para a IA ver
+            elif arq.type in ["image/png", "image/jpeg", "image/jpg"]:
+                img = Image.open(arq)
+                conteudo_ia.append(f"\nImagem do arquivo {arq.name}:")
+                conteudo_ia.append(img)
+        
+        # Adiciona todo o texto acumulado dos PDFs ao payload
+        if texto_acumulado:
+            conteudo_ia.append("\nTEXTOS EXTRAÍDOS DOS PDFs:\n" + texto_acumulado[:30000]) # Limite de caracteres por segurança
 
-        if tipo_arquivo == 'imagem':
-            response = model.generate_content([prompt_texto, conteudo])
-        else:
-            response = model.generate_content(prompt_texto + f"\n\nTexto do Documento:\n{conteudo[:20000]}")
-
+        # 3. Chamar a IA
+        response = model.generate_content(conteudo_ia)
+        
+        # 4. Limpar JSON
         json_str = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(json_str)
 
@@ -87,45 +124,40 @@ def extrair_dados_ia(conteudo, tipo_arquivo):
         st.error(f"Erro na análise IA: {e}")
         return None
 
-def ler_pdf(file):
-    texto = ""
-    with pdfplumber.open(file) as pdf:
-        for page in pdf.pages:
-            texto += page.extract_text() or ""
-    return texto
-
 def gerar_laudo_final(dados):
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-1.5-flash')
         
         prompt = f"""
-        Escreva um LAUDO TÉCNICO PERICIAL (Revisional Bancária).
-        Use formatação Markdown profissional.
+        Escreva um LAUDO TÉCNICO PERICIAL JURÍDICO (Revisional Bancária - SFH).
+        Use formatação Markdown profissional. Seja técnico, imparcial e contundente.
 
-        QUALIFICAÇÃO:
+        1. QUALIFICAÇÃO:
         - Mutuário: {dados['nome_cliente']}
-        - Banco: {dados['nome_banco']}
+        - Réu (Banco): {dados['nome_banco']}
         - Contrato nº: {dados['numero_contrato']}
         
-        DADOS TÉCNICOS:
-        - Valor: R$ {dados['valor_financiado']}
+        2. DADOS DO CONTRATO:
+        - Valor Financiado: R$ {dados['valor_financiado']}
         - Prazo: {dados['prazo_meses']} meses
         - Taxa Contratual: {dados['juros_anuais']}% a.a.
         
-        ACHADOS (IRREGULARIDADES):
-        - Prática identificada: Anatocismo via "Incorporação de Juros" (Cód. 410).
-        - Ocorrências: {dados['ocorrencias']} meses com amortização negativa.
-        - Saldo Banco (Viciado): R$ {dados['saldo_banco']}
-        - Saldo Recalculado (Justo): R$ {dados['saldo_justo']}
-        - DIFERENÇA A RECUPERAR: R$ {dados['diferenca']}
+        3. ACHADOS DA PERÍCIA (IRREGULARIDADES):
+        - Metodologia: Recálculo utilizando o Sistema de Amortização Constante (SAC) puro, sem capitalização.
+        - Irregularidade Principal: Identificada a prática de "Incorporação de Juros" (Código 410 no extrato), caracterizando Anatocismo (Súmula 121 STF).
+        - Impacto: {dados['ocorrencias']} meses onde os juros não pagos foram somados ao saldo devedor, gerando juros sobre juros.
         
-        ESCREVA OS TÓPICOS:
-        1. Identificação.
-        2. Do Objeto (Revisão de contrato habitacional).
-        3. Da Metodologia (Recálculo linear expurgando anatocismo - Súmula 121 STF).
-        4. Dos Quesitos e Constatações (Explique o dano financeiro).
-        5. Conclusão Pericial.
+        4. RESULTADO FINANCEIRO (DATA BASE ATUAL):
+        - Saldo Devedor Exigido pelo Banco (Viciado): R$ {dados['saldo_banco']}
+        - Saldo Devedor Apurado na Perícia (Legal): R$ {dados['saldo_justo']}
+        - INDÉBITO/PREJUÍZO A RECUPERAR: R$ {dados['diferenca']}
+        
+        ESTRUTURA DO TEXTO:
+        I. Do Objeto da Perícia
+        II. Da Metodologia Aplicada
+        III. Dos Quesitos Técnicos (Análise da Evolução da Dívida e do Anatocismo)
+        IV. Da Conclusão Pericial (Destaque o valor da diferença encontrada).
         """
         return model.generate_content(prompt).text
     except Exception as e:
@@ -133,31 +165,26 @@ def gerar_laudo_final(dados):
 
 # --- INTERFACE ---
 
-st.title("⚖️ James Sebastian AI - Auditoria Contratual")
-st.markdown("**Sistema Integrado:** PDF/Imagem -> OCR IA -> Laudo Jurídico")
+st.title("⚖️ James Sebastian AI - Auditoria Contratual Multidocumento")
+st.markdown("**Sistema Integrado:** Suporte a Múltiplos Arquivos (PDF + Imagens) -> Análise Cruzada -> Laudo Jurídico")
 
-# --- BARRA LATERAL ---
+# --- BARRA LATERAL (UPLOAD E DADOS) ---
 with st.sidebar:
     st.header("1. Upload de Documentos")
-    st.info("Suba fotos (JPG) ou arquivos (PDF) do contrato/extrato.")
+    st.info("Selecione TODOS os arquivos de uma vez (Contrato, Extrato, Fotos). Segure Ctrl ou Shift para selecionar vários.")
     
-    arquivo = st.file_uploader("Selecione o arquivo", type=["pdf", "jpg", "jpeg", "png"])
+    # ATUALIZAÇÃO IMPORTANTE: accept_multiple_files=True
+    arquivos = st.file_uploader("Selecione os arquivos", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True)
     
-    if arquivo and st.button("🔍 Extrair Dados com IA"):
-        with st.spinner("A IA está lendo o documento..."):
-            dados_extraidos = None
+    if arquivos and st.button("🔍 Analisar Documentos com IA"):
+        with st.spinner(f"A IA está lendo {len(arquivos)} documento(s)..."):
             
-            if arquivo.type == "application/pdf":
-                texto_pdf = ler_pdf(arquivo)
-                if texto_pdf:
-                    dados_extraidos = extrair_dados_ia(texto_pdf, 'texto')
-            else:
-                imagem = Image.open(arquivo)
-                dados_extraidos = extrair_dados_ia(imagem, 'imagem')
+            dados_extraidos = extrair_dados_multiplos(arquivos)
             
             if dados_extraidos:
-                st.session_state.nome_cliente = dados_extraidos.get('nomes', 'Não Identificado')
-                st.session_state.nome_banco = dados_extraidos.get('banco', 'Instituição Financeira')
+                # Atualiza Session State
+                st.session_state.nome_cliente = dados_extraidos.get('nomes', 'Não Identificado') or 'Não Identificado'
+                st.session_state.nome_banco = dados_extraidos.get('banco', 'Instituição Financeira') or 'Instituição Financeira'
                 st.session_state.numero_contrato = str(dados_extraidos.get('contrato', 'S/N'))
                 
                 val = float(dados_extraidos.get('valor_financiado', 0))
@@ -168,7 +195,7 @@ with st.sidebar:
                 if prz > 0: st.session_state.prazo_meses = prz
                 if jur > 0: st.session_state.juros_anuais = jur
                 
-                st.success("Leitura concluída com sucesso!")
+                st.success("Análise cruzada concluída!")
                 st.rerun()
             else:
                 st.error("Não foi possível extrair dados legíveis.")
@@ -252,7 +279,7 @@ with tab1:
 
 with tab2:
     st.subheader("Gerador de Laudo Automático")
-    st.write("A IA usará os dados extraídos do documento para redigir o laudo.")
+    st.write(f"Gerando laudo para: **{st.session_state.nome_cliente}** (Contrato: {st.session_state.numero_contrato})")
     
     if st.button("📝 Gerar Laudo Jurídico"):
         with st.spinner("Redigindo documento forense..."):
