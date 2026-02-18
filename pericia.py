@@ -10,6 +10,7 @@ from datetime import date
 import json
 
 # --- CONFIGURAÇÃO DA CHAVE DE API ---
+# Substitua pela sua chave real se necessário, mas a que você forneceu está aqui.
 GEMINI_API_KEY = "AIzaSyD068i8Vp9R24wwCjrRITsgTjAXo-I5Q-g"
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
@@ -111,7 +112,7 @@ def extrair_dados_multiplos(arquivos):
         
         # Adiciona todo o texto acumulado dos PDFs ao payload
         if texto_acumulado:
-            conteudo_ia.append("\nTEXTOS EXTRAÍDOS DOS PDFs:\n" + texto_acumulado[:30000]) # Limite de caracteres por segurança
+            conteudo_ia.append("\nTEXTOS EXTRAÍDOS DOS PDFs:\n" + texto_acumulado[:30000]) # Limite de caracteres
 
         # 3. Chamar a IA
         response = model.generate_content(conteudo_ia)
@@ -173,7 +174,6 @@ with st.sidebar:
     st.header("1. Upload de Documentos")
     st.info("Selecione TODOS os arquivos de uma vez (Contrato, Extrato, Fotos). Segure Ctrl ou Shift para selecionar vários.")
     
-    # ATUALIZAÇÃO IMPORTANTE: accept_multiple_files=True
     arquivos = st.file_uploader("Selecione os arquivos", type=["pdf", "jpg", "jpeg", "png"], accept_multiple_files=True)
     
     if arquivos and st.button("🔍 Analisar Documentos com IA"):
@@ -182,18 +182,18 @@ with st.sidebar:
             dados_extraidos = extrair_dados_multiplos(arquivos)
             
             if dados_extraidos:
-                # Atualiza Session State
-                st.session_state.nome_cliente = dados_extraidos.get('nomes', 'Não Identificado') or 'Não Identificado'
-                st.session_state.nome_banco = dados_extraidos.get('banco', 'Instituição Financeira') or 'Instituição Financeira'
-                st.session_state.numero_contrato = str(dados_extraidos.get('contrato', 'S/N'))
+                # Atualiza Session State com verificação de nulos
+                st.session_state.nome_cliente = dados_extraidos.get('nomes') or "Não Identificado"
+                st.session_state.nome_banco = dados_extraidos.get('banco') or "Instituição Financeira"
+                st.session_state.numero_contrato = str(dados_extraidos.get('contrato') or "S/N")
                 
-                val = float(dados_extraidos.get('valor_financiado', 0))
-                prz = int(dados_extraidos.get('prazo_meses', 0))
-                jur = float(dados_extraidos.get('taxa_juros_anual', 0))
+                val = dados_extraidos.get('valor_financiado')
+                prz = dados_extraidos.get('prazo_meses')
+                jur = dados_extraidos.get('taxa_juros_anual')
                 
-                if val > 0: st.session_state.valor_financiado = val
-                if prz > 0: st.session_state.prazo_meses = prz
-                if jur > 0: st.session_state.juros_anuais = jur
+                if val: st.session_state.valor_financiado = float(val)
+                if prz: st.session_state.prazo_meses = int(prz)
+                if jur: st.session_state.juros_anuais = float(jur)
                 
                 st.success("Análise cruzada concluída!")
                 st.rerun()
@@ -279,7 +279,7 @@ with tab1:
 
 with tab2:
     st.subheader("Gerador de Laudo Automático")
-    st.write(f"Gerando laudo para: **{st.session_state.nome_cliente}** (Contrato: {st.session_state.numero_contrato})")
+    st.write(f"Gerando laudo para: **{st.session_state.nome_cliente}**")
     
     if st.button("📝 Gerar Laudo Jurídico"):
         with st.spinner("Redigindo documento forense..."):
