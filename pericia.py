@@ -2,7 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from datetime import date
+import requests
+import google.generativeai as genai
+from datetime import date, datetime
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
@@ -11,57 +13,121 @@ st.set_page_config(
     page_icon="⚖️"
 )
 
-# --- LISTA DE CAPACIDADES (Do Prompt) ---
-capacidades_sistema = [
-    "Realizar recálculo completo de dívidas em contratos SFH/SAC, ajustando amortizações e juros conforme normas vigentes.",
-    "Expurgar anatocismo (capitalização de juros sobre juros) de acordo com a Súmula 121 do STF.",
-    "Detectar irregularidades específicas, como o Código 410 (irregularidades contratuais na Caixa).",
-    "Analisar o histórico de parcelas pagas, identificando atrasos e recalculando multas.",
-    "Gerar relatórios detalhados com demonstrativos de amortização média e juros acumulados.",
-    "Calcular diferenças totais em amortizações, tarifas questionáveis e abatimentos indevidos.",
-    "Simular cenários de renegociação de dívidas, projetando novos planos de pagamento.",
-    "Integrar dados de entrada para análises automatizadas.",
-    "Gerar gráficos comparativos para visualização de discrepâncias.",
-    "Exportar resultados em formatos como Excel/CSV para uso em perícias judiciais.",
-    "Verificar conformidade com normas do Banco Central do Brasil.",
-    "Processar múltiplos contratos em batch (Módulo Enterprise)."
-]
+# --- FUNÇÕES DE INTEGRAÇÃO EXTERNA (BACEN & AI) ---
+
+@st.cache_data(ttl=3600) # Cache de 1 hora para não sobrecarregar a API
+def obter_indices_bacen():
+    """Busca indicadores econômicos reais da API do Banco Central do Brasil"""
+    try:
+        # Endpoints da API do Bacen (SGS)
+        # 11 = Selic, 226 = TR, 433 = IPCA
+        apis = {
+            "Selic Meta": "https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1?formato=json",
+            "TR (Mensal)": "https://api.bcb.gov.br/dados/serie/bcdata.sgs.226/dados/ultimos/1?formato=json",
+            "IPCA (12m)": "https://api.bcb.gov.br/dados/serie/bcdata.sgs.13522/dados/ultimos/1?formato=json" 
+        }
+        
+        resultados = {}
+        for nome, url in apis.items():
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                dado = response.json()[0]
+                valor = float(dado['valor'])
+                data = dado['data']
+                resultados[nome] = (valor, data)
+            else:
+                resultados[nome] = (0.0, "Erro")
+        return resultados
+    except Exception as e:
+        return None
+
+def gerar_laudo_ia(api_key, dados_pericia):
+    """Gera um laudo jurídico formal usando IA (Google Gemini)"""
+    if not api_key:
+        return "⚠️ Erro: Chave de API da IA não fornecida."
+    
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        prompt = f"""
+        Você é James Sebastian, um perito judicial especialista em contratos bancários e matemática financeira.
+        Escreva um LAUDO TÉCNICO PERICIAL JURÍDICO formal com base nos seguintes dados calculados:
+
+        DADOS DO CONTRATO:
+        - Valor Financiado: R$ {dados_pericia['valor_financiado']}
+        - Prazo: {dados_pericia['prazo']} meses
+        - Taxa Contratual: {dados_pericia['taxa_juros']}% a.a.
+
+        ACHADOS DA PERÍCIA (IRREGULARIDADES):
+        - Metodologia Aplicada: Expurgo da Capitalização de Juros (Anatocismo) conforme Súmula 121 STF.
+        - Irregularidade Detectada: 'Incorporação de Juros' (Código 410) ao saldo devedor.
+        - Quantidade de Ocorrências: {dados_pericia['ocorrencias']} meses com amortização negativa.
+        
+        RESULTADOS FINANCEIROS:
+        - Saldo Devedor cobrado pelo Banco: R$ {dados_pericia['saldo_banco']}
+        - Saldo Devedor Recalculado (Justo): R$ {dados_pericia['saldo_justo']}
+        - PREJUÍZO AO CONSUMIDOR (Diferença): R$ {dados_pericia['diferenca']}
+
+        ESTRUTURA DO LAUDO:
+        1. Identificação do Perito
+        2. Objeto da Perícia
+        3. Metodologia (Citar SAC e Súmula 121 STF)
+        4. Quesitos Técnicos (Análise da Incorporação Cód 410)
+        5. Conclusão Pericial (Enfatizar o prejuízo financeiro e a descaracterização do SAC).
+        
+        Use linguagem jurídica adequada, tom imparcial mas firme tecnicamente. Formate em Markdown.
+        """
+        
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"Erro ao gerar laudo com IA: {str(e)}"
 
 # --- TÍTULO E CABEÇALHO ---
 st.title("⚖️ Sistema de Perícia Revisional Bancária")
 st.markdown("""
-**Perito Responsável:** James Sebastian | **Metodologia:** Expurgo de Anatocismo (Súmula 121 STF)
-Este sistema realiza auditoria financeira em contratos habitacionais, identificando irregularidades como a "Incorporação de Juros" (Cód. 410) e recalculando o saldo devedor real.
+**Perito Responsável:** James Sebastian AI | **Status:** Online
+Sistema de auditoria forense com **integração Bacen** e **Geração de Laudos via IA**.
 """)
 
 # --- BARRA LATERAL ---
 with st.sidebar:
-    st.header("1. Parâmetros do Contrato")
+    st.header("1. Configurações da IA")
+    api_key = st.text_input("Google Gemini API Key", type="password", help="Cole sua chave API aqui para gerar o laudo automático.")
+    st.caption("[Obter Chave Grátis no Google AI Studio](https://aistudio.google.com/app/apikey)")
     
-    # Inputs
+    st.divider()
+
+    st.header("2. Parâmetros do Contrato")
     valor_financiado = st.number_input("Valor Financiado (R$)", value=305000.00, step=1000.00, format="%.2f")
     prazo_meses = st.number_input("Prazo Total (Meses)", value=358)
     juros_anuais = st.number_input("Taxa de Juros Anual (%)", value=10.5)
-    data_inicio = st.date_input("Data Início", value=date(2021, 7, 28))
-
-    st.header("2. Cenário Banco (Simulado)")
-    st.info("Simulação de irregularidades encontradas no extrato bancário.")
+    
+    st.header("3. Cenário Banco (Simulado)")
     ocorrencias_410 = st.slider("Qtd. de 'Incorporações' (Cód 410)", 0, 20, 5)
     valor_incorporado_medio = st.number_input("Valor Médio Incorporado (R$)", value=2500.00, format="%.2f")
 
-    st.markdown("---")
-    
-    # Exibição das Funcionalidades (Capacidade Documental)
-    with st.expander("📚 Funcionalidades do Sistema"):
-        for cap in capacidades_sistema:
-            st.caption(f"• {cap}")
+# --- DASHBOARD DE MERCADO (LIVE) ---
+st.subheader("📈 Indicadores de Mercado (Fonte: Banco Central)")
+indices = obter_indices_bacen()
 
-# --- FUNÇÕES DE CÁLCULO ---
+col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+if indices:
+    col_m1.metric("Selic Meta (Atual)", f"{indices['Selic Meta'][0]}% a.a.")
+    col_m2.metric("TR (Último Mês)", f"{indices['TR (Mensal)'][0]}%")
+    col_m3.metric("IPCA (Acum. 12m)", f"{indices['IPCA (12m)'][0]}%")
+    col_m4.metric("Status API Bacen", "Conectado 🟢")
+else:
+    st.warning("Não foi possível conectar à API do Banco Central no momento.")
+
+st.divider()
+
+# --- FUNÇÕES DE CÁLCULO (CORE) ---
 
 def calcular_sac_puro(valor, meses, taxa_anual):
     taxa_mensal = (1 + taxa_anual/100)**(1/12) - 1
     amortizacao = valor / meses
-    
     saldo = valor
     dados = []
     
@@ -70,42 +136,29 @@ def calcular_sac_puro(valor, meses, taxa_anual):
         prestacao = amortizacao + juros
         saldo_anterior = saldo
         saldo -= amortizacao
-        
         if saldo < 0: saldo = 0
         
         dados.append({
-            "Mês": i,
-            "Saldo Devedor": saldo_anterior,
-            "Amortização": amortizacao,
-            "Juros": juros,
-            "Prestação": prestacao,
-            "Cenário": "SAC Legal (Sem Abuso)"
+            "Mês": i, "Saldo Devedor": saldo_anterior, "Amortização": amortizacao,
+            "Juros": juros, "Prestação": prestacao, "Cenário": "SAC Legal"
         })
-        
     return pd.DataFrame(dados)
 
 def simular_cenario_banco(df_sac, ocorrencias, valor_inc):
     df_banco = df_sac.copy()
-    df_banco["Cenário"] = "Banco (Com Anatocismo)"
-    
+    df_banco["Cenário"] = "Banco (Viciado)"
     saldo_atual = valor_financiado
     saldos = []
-    
-    # Índices onde ocorrem as incorporações (simulando aleatoriedade)
     indices_inc = np.linspace(10, 52, ocorrencias, dtype=int)
     
     for i, row in df_banco.iterrows():
-        juros = row["Juros"]
         amort = row["Amortização"]
-        
-        # Se for mês de incorporação (Código 410)
         if (i + 1) in indices_inc:
-            saldo_atual += valor_inc # Incorporação (Aumenta dívida)
-            amort = 0 # Amortização negativa
+            saldo_atual += valor_inc 
+            amort = 0 
             df_banco.at[i, "Obs"] = "⚠️ CÓD 410"
         else:
             saldo_atual -= amort
-            
         if saldo_atual < 0: saldo_atual = 0
         saldos.append(saldo_atual)
         
@@ -113,117 +166,71 @@ def simular_cenario_banco(df_sac, ocorrencias, valor_inc):
     return df_banco
 
 # --- PROCESSAMENTO ---
-
 df_sac = calcular_sac_puro(valor_financiado, prazo_meses, juros_anuais)
 df_banco = simular_cenario_banco(df_sac, ocorrencias_410, valor_incorporado_medio)
 
-# Momento atual (simulado mês 52)
 mes_atual = 52
 saldo_sac_hoje = df_sac.iloc[mes_atual]['Saldo Devedor']
 saldo_banco_hoje = df_banco.iloc[mes_atual]['Saldo Devedor']
 diferenca = saldo_banco_hoje - saldo_sac_hoje
 
-# --- INTERFACE PRINCIPAL (ABAS) ---
-
-tab1, tab2, tab3 = st.tabs(["📊 Análise Visual & KPIs", "📑 Relatório Detalhado & Exportação", "💰 Simulação de Renegociação"])
+# --- INTERFACE (ABAS) ---
+tab1, tab2, tab3 = st.tabs(["📊 Análise Visual", "🤖 Laudo Pericial (IA)", "📑 Dados Detalhados"])
 
 with tab1:
-    # 1. KPIs
     col1, col2, col3 = st.columns(3)
     col1.metric("Saldo Devedor (Banco)", f"R$ {saldo_banco_hoje:,.2f}", delta_color="inverse")
-    col2.metric("Saldo Devedor (Recálculo Justo)", f"R$ {saldo_sac_hoje:,.2f}", delta=f"- R$ {diferenca:,.2f}")
-    col3.metric("Indício de Anatocismo", "DETECTADO" if ocorrencias_410 > 0 else "NÃO DETECTADO", 
-                delta_color="inverse", help="Baseado na detecção de Código 410 e amortização negativa.")
+    col2.metric("Saldo Devedor (Justo)", f"R$ {saldo_sac_hoje:,.2f}", delta=f"- R$ {diferenca:,.2f}")
+    col3.metric("Indício de Anatocismo", "ALTO RISCO" if ocorrencias_410 > 0 else "BAIXO", delta_color="inverse")
 
-    st.markdown("---")
-
-    # 2. Gráfico
-    st.subheader("📉 Evolução da Dívida: Banco vs. Perícia")
     fig = go.Figure()
-
-    # Linha do SAC Puro
-    fig.add_trace(go.Scatter(
-        x=df_sac['Mês'], y=df_sac['Saldo Devedor'],
-        mode='lines', name='Evolução Legal (SAC Puro)',
-        line=dict(color='green', width=2, dash='dash')
-    ))
-
-    # Linha do Banco
-    fig.add_trace(go.Scatter(
-        x=df_banco['Mês'], y=df_banco['Saldo Devedor'],
-        mode='lines', name='Evolução Banco (Com Vícios)',
-        line=dict(color='red', width=3)
-    ))
-
-    fig.add_vline(x=mes_atual, line_dash="dot", annotation_text="Hoje (Mês 52)")
-    fig.update_layout(height=450, xaxis_title="Meses Decorridos", yaxis_title="Saldo Devedor (R$)")
+    fig.add_trace(go.Scatter(x=df_sac['Mês'], y=df_sac['Saldo Devedor'], mode='lines', name='SAC Puro', line=dict(color='green', dash='dash')))
+    fig.add_trace(go.Scatter(x=df_banco['Mês'], y=df_banco['Saldo Devedor'], mode='lines', name='Banco (Com Incorporações)', line=dict(color='red')))
+    fig.update_layout(height=400, title="Divergência de Saldo Devedor")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Conclusão Automática
-    if diferenca > 0:
-        st.error(f"""
-        **CONCLUSÃO PERICIAL PRELIMINAR:**
-        Foi identificada uma divergência de **R$ {diferenca:,.2f}** em desfavor do mutuário.
-        A aplicação de incorporações (Cód 410) gerou amortização negativa, violando a metodologia SAC contratada.
-        Recomenda-se ação revisional para expurgo do anatocismo.
-        """)
-    else:
-        st.success("Não foram encontradas divergências significativas com os parâmetros atuais.")
-
 with tab2:
-    st.subheader("📋 Laudo Técnico Simplificado (Tabela)")
+    st.header("🤖 Gerador de Laudo Pericial com IA")
+    st.info("A Inteligência Artificial analisará os dados calculados e redigirá um laudo jurídico formal.")
     
-    # Preparar DataFrame para exibição
+    if st.button("📝 Escrever Laudo Pericial Agora"):
+        if not api_key:
+            st.error("Por favor, insira sua API Key do Google Gemini na barra lateral para usar a IA.")
+        else:
+            with st.spinner("O Perito Virtual (IA) está redigindo o laudo..."):
+                # Prepara os dados para a IA
+                dados_contexto = {
+                    "valor_financiado": f"{valor_financiado:,.2f}",
+                    "prazo": prazo_meses,
+                    "taxa_juros": juros_anuais,
+                    "ocorrencias": ocorrencias_410,
+                    "saldo_banco": f"{saldo_banco_hoje:,.2f}",
+                    "saldo_justo": f"{saldo_sac_hoje:,.2f}",
+                    "diferenca": f"{diferenca:,.2f}"
+                }
+                laudo_texto = gerar_laudo_ia(api_key, dados_contexto)
+                
+                st.markdown("### 📄 Laudo Técnico Gerado")
+                st.markdown(laudo_texto)
+                
+                st.download_button(
+                    label="📥 Baixar Laudo (TXT)",
+                    data=laudo_texto,
+                    file_name="laudo_pericial_ia.txt",
+                    mime="text/plain"
+                )
+
+with tab3:
+    st.subheader("Tabela de Evolução Comparativa")
     df_display = pd.DataFrame({
         "Mês": df_sac["Mês"],
         "Saldo Banco": df_banco["Saldo Devedor"],
         "Saldo Justo": df_sac["Saldo Devedor"],
-        "Diferença (Prejuízo)": df_banco["Saldo Devedor"] - df_sac["Saldo Devedor"],
-        "Ocorrência": df_banco.get("Obs", "")
+        "Diferença": df_banco["Saldo Devedor"] - df_sac["Saldo Devedor"],
+        "Nota": df_banco.get("Obs", "")
     })
-
-    # Função de estilo
-    def highlight_410(s):
-        return ['background-color: #ffcccc; color: darkred' if v == '⚠️ CÓD 410' else '' for v in s]
-
-    st.dataframe(
-        df_display.style.format({
-            "Saldo Banco": "R$ {:,.2f}", 
-            "Saldo Justo": "R$ {:,.2f}", 
-            "Diferença (Prejuízo)": "R$ {:,.2f}"
-        }).apply(highlight_410, subset=['Ocorrência']),
-        use_container_width=True,
-        height=400
-    )
-
-    # Botão de Exportação (Capacidade 10)
-    csv = df_display.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Baixar Relatório Completo (CSV)",
-        data=csv,
-        file_name='laudo_pericial_revisional.csv',
-        mime='text/csv',
-    )
-
-with tab3:
-    st.subheader("🤝 Simulação de Acordo / Renegociação")
-    st.markdown("Projeção de novo plano de pagamento baseada no **Saldo Devedor Justo** (Expurgo do Anatocismo).")
     
-    col_a, col_b = st.columns(2)
-    
-    with col_a:
-        st.info(f"**Saldo Devedor Atual (Justo):** R$ {saldo_sac_hoje:,.2f}")
-        novo_prazo = st.number_input("Novo Prazo Desejado (Meses)", value=int(prazo_meses - mes_atual))
-        nova_taxa = st.number_input("Nova Taxa de Juros Anual (%)", value=10.0)
-    
-    with col_b:
-        # Cálculo simples da nova prestação (SAC)
-        nova_taxa_mensal = (1 + nova_taxa/100)**(1/12) - 1
-        nova_amort = saldo_sac_hoje / novo_prazo
-        primeiro_juro = saldo_sac_hoje * nova_taxa_mensal
-        primeira_parcela = nova_amort + primeiro_juro
-        
-        st.metric("Nova Primeira Parcela (Estimada)", f"R$ {primeira_parcela:,.2f}")
-        st.metric("Economia Mensal Estimada", f"R$ {diferenca * 0.01:,.2f} (média aprox)")
-        
-        st.warning("Esta é uma simulação extrajudicial baseada no recálculo pericial. Valores sujeitos a negociação com a instituição.")
+    def highlight_bad(s):
+        return ['background-color: #ffcccc' if v == '⚠️ CÓD 410' else '' for v in s]
+
+    st.dataframe(df_display.style.format({"Saldo Banco": "R$ {:,.2f}", "Saldo Justo": "R$ {:,.2f}", "Diferença": "R$ {:,.2f}"}).apply(highlight_bad, subset=['Nota']), use_container_width=True)
