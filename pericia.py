@@ -14,10 +14,11 @@ import logging
 logging.basicConfig(level=logging.ERROR)
 
 # --- CONFIGURAÇÃO DE SEGURANÇA (SECRETS) ---
-# Use apenas secrets; configure no Streamlit Cloud ou local via secrets.toml
+# A chave deve estar configurada exclusivamente via secrets.toml ou painel do Streamlit Cloud
 if "GEMINI_API_KEY" not in st.secrets:
-    st.error("Chave API Gemini não configurada. Adicione em st.secrets.")
+    st.error("Chave API Gemini não encontrada. Configure-a no painel do Streamlit Cloud (Settings → Secrets) ou no arquivo .streamlit/secrets.toml local.")
     st.stop()
+
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
@@ -30,6 +31,7 @@ st.set_page_config(
 # --- INICIALIZAÇÃO DE ESTADO ---
 if 'dados_carregados' not in st.session_state:
     st.session_state.dados_carregados = False
+
 campos_init = {
     'nome_cliente': "",
     'nome_banco': "",
@@ -38,31 +40,30 @@ campos_init = {
     'prazo_meses': 0,
     'juros_anuais': 0.0
 }
+
 for campo, valor in campos_init.items():
     if campo not in st.session_state:
         st.session_state[campo] = valor
 
-# --- FUNÇÃO PARA BUSCA DINÂMICA DO MODELO (Atualizado para 2026 com base em docs atuais) ---
+# --- FUNÇÃO PARA BUSCA DINÂMICA DO MODELO ---
 def buscar_melhor_modelo():
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         modelos_disponiveis = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        # Prioridades atualizadas: Modelos mais novos e previews para 2026
         prioridades = [
-            'models/gemini-flash-latest',          # Aponta para o latest (ex: Gemini 3 Flash)
+            'models/gemini-flash-latest',
             'models/gemini-3-flash',
             'models/gemini-3-pro',
             'models/gemini-2.5-flash',
             'models/gemini-2.5-pro',
-            'models/gemini-2.5-flash-lite'         # Mais leve se necessário
+            'models/gemini-2.5-flash-lite'
         ]
         for modelo in prioridades:
             if modelo in modelos_disponiveis:
                 return modelo
-        # Fallback para o mais genérico disponível
         if modelos_disponiveis:
             return modelos_disponiveis[0]
-        return 'gemini-flash-latest'  # Assumindo padrão futuro
+        return 'gemini-flash-latest'
     except Exception as e:
         logging.error(f"Erro ao buscar modelos: {e}")
         return 'gemini-flash-latest'
@@ -87,9 +88,9 @@ def obter_indices_completos():
     return res
 
 # --- FUNÇÕES DE IA ---
-@st.cache_data(ttl=3600)  # Cache para evitar chamadas repetidas caras
+@st.cache_data(ttl=3600)
 def extrair_dados_ia(arquivos_tuple):
-    arquivos = list(arquivos_tuple)  # Converte tuple de volta para lista
+    arquivos = list(arquivos_tuple)
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         modelo_nome = buscar_melhor_modelo()
@@ -110,26 +111,24 @@ def extrair_dados_ia(arquivos_tuple):
             if arq.type == "application/pdf":
                 with pdfplumber.open(arq) as pdf:
                     texto = "\n".join([p.extract_text() or "" for p in pdf.pages])
-                    # Aumentei para 20000 para mais segurança, mas monitore limites Gemini
                     conteudo.append(f"Texto do PDF: {texto[:20000]}")
             else:
                 conteudo.append(Image.open(arq))
         
         response = model.generate_content(conteudo)
         txt = response.text.strip().replace("```json", "").replace("```", "")
-        # Parsing com try-except
         try:
             return json.loads(txt)
         except json.JSONDecodeError as e:
             logging.error(f"Erro ao parsear JSON da IA: {e}")
             return None
     except Exception as e:
-        st.error(f"Erro na extração com IA: {str(e)} (Verifique chave API, modelo ou arquivos).")
+        st.error(f"Erro na extração com IA: {str(e)}\nVerifique: chave API, modelo disponível, PDFs legíveis ou limite de quota.")
         logging.error(f"Erro na extração IA: {e}")
         return None
 
-# --- MOTOR DE CÁLCULO PERICIAL (SAC REAL, com Melhorias) ---
-def calcular_evolucao_pericial(valor, prazo, juros_anual, tr_mensal=0.0):  # Adicionei TR para correção SFH
+# --- MOTOR DE CÁLCULO PERICIAL ---
+def calcular_evolucao_pericial(valor, prazo, juros_anual, tr_mensal=0.0):
     if prazo <= 0:
         return None
     
@@ -138,23 +137,21 @@ def calcular_evolucao_pericial(valor, prazo, juros_anual, tr_mensal=0.0):  # Adi
     
     saldo_legal = [valor]
     saldo_viciado = [valor]
-    juros_pagos_legal = [0.0]  # Novo: Cumulativo de juros pagos no legal
+    juros_pagos_legal = [0.0]
     
     curr_l, curr_v = valor, valor
     cumul_juros_l = 0.0
     
     for i in range(1, prazo + 1):
-        # 1. CENÁRIO LEGAL (SAC PURO): Amort fixa + juros sobre saldo, sem capitalização
         juros_mes_l = curr_l * taxa_mensal
         cumul_juros_l += juros_mes_l
-        curr_l = curr_l * (1 + tr_mensal / 100) - amort_fixa  # Adicionei correção TR opcional
+        curr_l = curr_l * (1 + tr_mensal / 100) - amort_fixa
         saldo_legal.append(max(0, curr_l))
         juros_pagos_legal.append(cumul_juros_l)
         
-        # 2. CENÁRIO VICIADO (Simulação de Anatocismo/Cod 410): Capitalização mensal parcial
         juros_mes_v = curr_v * taxa_mensal
-        curr_v += juros_mes_v * 0.2  # Capitaliza 20% dos juros mensalmente (melhor simulação)
-        curr_v = curr_v * (1 + tr_mensal / 100) - (amort_fixa * 0.95)  # Amort reduzida + TR
+        curr_v += juros_mes_v * 0.2
+        curr_v = curr_v * (1 + tr_mensal / 100) - (amort_fixa * 0.95)
         saldo_viciado.append(max(0, curr_v))
     
     return pd.DataFrame({
@@ -175,12 +172,14 @@ c3.metric("IPCA (12m)", f"{indices['IPCA']}%")
 c4.metric("Dólar", f"R$ {indices['Dolar']:.2f}")
 c5.metric("Euro", f"R$ {indices['Euro']:.2f}")
 st.divider()
+
 with st.sidebar:
     st.header("📂 1. Documentação")
     arquivos = st.file_uploader("Suba o Contrato e Evolutivos", type=["pdf", "jpg", "png"], accept_multiple_files=True)
+    
     if arquivos and st.button("🔍 Iniciar Auditoria IA"):
         with st.spinner("Analisando documentos com IA... (pode demorar 10-60s)"):
-            res = extrair_dados_ia(tuple(arquivos))  # Tuple para cache
+            res = extrair_dados_ia(tuple(arquivos))
             if res:
                 st.session_state.nome_cliente = res.get('nomes') or ""
                 st.session_state.nome_banco = res.get('banco') or ""
@@ -192,7 +191,8 @@ with st.sidebar:
                 st.success("Auditoria concluída! Dados extraídos com sucesso.")
                 st.rerun()
             else:
-                st.error("Falha na análise IA. Possíveis causas:\n- Modelo Gemini indisponível (verifique console para detalhes)\n- Chave API inválida ou quotas excedidas\n- PDFs sem texto selecionável (escaneados como imagem)\n- Erro de rede ou arquivos muito grandes\nVerifique o console do navegador (F12 → Console) para erros detalhados.")
+                st.error("Falha na análise IA. Verifique:\n- Chave API configurada corretamente\n- PDFs com texto selecionável (não apenas imagem)\n- Conexão e quotas da API\nConsulte o console (F12 → Console/Network) para detalhes.")
+    
     st.divider()
     st.header("📝 2. Ajustes Manuais")
     st.session_state.nome_cliente = st.text_input("Mutuário", st.session_state.nome_cliente)
@@ -203,6 +203,7 @@ with st.sidebar:
         st.session_state.dados_carregados = True
 
 t1, t2 = st.tabs(["📊 Evolução e Perícia", "📝 Laudo Jurídico"])
+
 with t1:
     if not st.session_state.dados_carregados or st.session_state.valor_financiado == 0:
         st.info("💡 **Aguardando Auditoria.** Por favor, carregue os arquivos ou preencha os dados na barra lateral.")
@@ -211,15 +212,16 @@ with t1:
             st.session_state.valor_financiado,
             st.session_state.prazo_meses,
             st.session_state.juros_anuais,
-            tr_mensal=indices['TR']  # Usa TR real para correção
+            tr_mensal=indices['TR']
         )
         
-        st.write(f"Banco: {st.session_state.nome_banco} | Contrato: {st.session_state.numero_contrato}")
+        st.write(f"**Banco:** {st.session_state.nome_banco} | **Contrato:** {st.session_state.numero_contrato}")
         
         m_ref = min(52, st.session_state.prazo_meses)
         saldo_b = df.iloc[m_ref]['Viciado']
         saldo_l = df.iloc[m_ref]['Legal']
         dif = saldo_b - saldo_l
+        
         col_a, col_b, col_c = st.columns(3)
         col_a.metric("Saldo Banco (Exigido)", f"R$ {saldo_b:,.2f}")
         col_b.metric("Saldo Legal (Justo)", f"R$ {saldo_l:,.2f}")
@@ -237,7 +239,6 @@ with t2:
         if st.button("📝 Gerar Peça Jurídica"):
             with st.spinner("Redigindo laudo técnico..."):
                 model = genai.GenerativeModel(buscar_melhor_modelo())
-                # Prompt melhorado com integração de resultados
                 prompt = f"""
                 Escreva um laudo pericial formal em Markdown para {st.session_state.nome_cliente} contra o banco {st.session_state.nome_banco}.
                 Contrato: {st.session_state.numero_contrato}. Valor original: R$ {st.session_state.valor_financiado:,.2f}.
