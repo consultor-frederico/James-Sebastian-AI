@@ -42,13 +42,20 @@ for campo, valor in campos_init.items():
     if campo not in st.session_state:
         st.session_state[campo] = valor
 
-# --- FUNÇÃO PARA BUSCA DINÂMICA DO MODELO (Atualizado para 2026) ---
+# --- FUNÇÃO PARA BUSCA DINÂMICA DO MODELO (Atualizado para 2026 com base em docs atuais) ---
 def buscar_melhor_modelo():
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         modelos_disponiveis = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        # Prioridades atualizadas: Modelos mais novos primeiro
-        prioridades = ['models/gemini-flash-latest', 'models/gemini-2.5-flash', 'models/gemini-1.5-flash-latest', 'models/gemini-1.5-flash']
+        # Prioridades atualizadas: Modelos mais novos e previews para 2026
+        prioridades = [
+            'models/gemini-flash-latest',          # Aponta para o latest (ex: Gemini 3 Flash)
+            'models/gemini-3-flash',
+            'models/gemini-3-pro',
+            'models/gemini-2.5-flash',
+            'models/gemini-2.5-pro',
+            'models/gemini-2.5-flash-lite'         # Mais leve se necessário
+        ]
         for modelo in prioridades:
             if modelo in modelos_disponiveis:
                 return modelo
@@ -81,7 +88,8 @@ def obter_indices_completos():
 
 # --- FUNÇÕES DE IA ---
 @st.cache_data(ttl=3600)  # Cache para evitar chamadas repetidas caras
-def extrair_dados_ia(arquivos):
+def extrair_dados_ia(arquivos_tuple):
+    arquivos = list(arquivos_tuple)  # Converte tuple de volta para lista
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         modelo_nome = buscar_melhor_modelo()
@@ -116,6 +124,7 @@ def extrair_dados_ia(arquivos):
             logging.error(f"Erro ao parsear JSON da IA: {e}")
             return None
     except Exception as e:
+        st.error(f"Erro na extração com IA: {str(e)} (Verifique chave API, modelo ou arquivos).")
         logging.error(f"Erro na extração IA: {e}")
         return None
 
@@ -170,7 +179,7 @@ with st.sidebar:
     st.header("📂 1. Documentação")
     arquivos = st.file_uploader("Suba o Contrato e Evolutivos", type=["pdf", "jpg", "png"], accept_multiple_files=True)
     if arquivos and st.button("🔍 Iniciar Auditoria IA"):
-        with st.spinner("Analisando documentos..."):
+        with st.spinner("Analisando documentos com IA... (pode demorar 10-60s)"):
             res = extrair_dados_ia(tuple(arquivos))  # Tuple para cache
             if res:
                 st.session_state.nome_cliente = res.get('nomes') or ""
@@ -180,7 +189,10 @@ with st.sidebar:
                 st.session_state.prazo_meses = int(res.get('prazo_meses') or 0)
                 st.session_state.juros_anuais = float(res.get('taxa_juros_anual') or 0.0)
                 st.session_state.dados_carregados = True
+                st.success("Auditoria concluída! Dados extraídos com sucesso.")
                 st.rerun()
+            else:
+                st.error("Falha na análise IA. Possíveis causas:\n- Modelo Gemini indisponível (verifique console para detalhes)\n- Chave API inválida ou quotas excedidas\n- PDFs sem texto selecionável (escaneados como imagem)\n- Erro de rede ou arquivos muito grandes\nVerifique o console do navegador (F12 → Console) para erros detalhados.")
     st.divider()
     st.header("📝 2. Ajustes Manuais")
     st.session_state.nome_cliente = st.text_input("Mutuário", st.session_state.nome_cliente)
