@@ -5,12 +5,11 @@ import plotly.graph_objects as go
 import requests
 import google.generativeai as genai
 import pdfplumber
+from PIL import Image
 from datetime import date
 import json
 
-# --- CONFIGURAÇÃO DA CHAVE DE API (HARDCODED) ---
-# ⚠️ ATENÇÃO: Se este código for para um GitHub PÚBLICO, esta chave ficará exposta.
-# O ideal é usar st.secrets, mas para seu uso imediato, está configurada aqui.
+# --- CONFIGURAÇÃO DA CHAVE DE API ---
 GEMINI_API_KEY = "AIzaSyD068i8Vp9R24wwCjrRITsgTjAXo-I5Q-g"
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
@@ -21,224 +20,253 @@ st.set_page_config(
 )
 
 # --- INICIALIZAÇÃO DE ESTADO (SESSION STATE) ---
-# Isso permite que os dados preenchidos pela IA permaneçam na tela
-if 'valor_financiado' not in st.session_state: st.session_state.valor_financiado = 305000.00
-if 'prazo_meses' not in st.session_state: st.session_state.prazo_meses = 360
-if 'juros_anuais' not in st.session_state: st.session_state.juros_anuais = 10.5
+# Inicializa variáveis para não perderem valor ao recarregar a tela
+campos_padrao = {
+    'valor_financiado': 305000.00,
+    'prazo_meses': 360,
+    'juros_anuais': 10.5,
+    'nome_cliente': "Não Identificado",
+    'numero_contrato': "S/N",
+    'nome_banco': "Instituição Financeira"
+}
 
-# --- FUNÇÕES DE INTEGRAÇÃO ---
+for campo, valor in campos_padrao.items():
+    if campo not in st.session_state:
+        st.session_state[campo] = valor
+
+# --- FUNÇÕES AUXILIARES ---
 
 @st.cache_data(ttl=3600)
 def obter_indices_bacen():
-    """Busca indicadores econômicos reais da API do Banco Central"""
+    """Busca indicadores do Bacen"""
     try:
         apis = {
-            "Selic Meta": "https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1?formato=json",
-            "TR (Mensal)": "https://api.bcb.gov.br/dados/serie/bcdata.sgs.226/dados/ultimos/1?formato=json",
-            "IPCA (12m)": "https://api.bcb.gov.br/dados/serie/bcdata.sgs.13522/dados/ultimos/1?formato=json" 
+            "Selic": "https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1?formato=json",
+            "TR": "https://api.bcb.gov.br/dados/serie/bcdata.sgs.226/dados/ultimos/1?formato=json",
+            "IPCA": "https://api.bcb.gov.br/dados/serie/bcdata.sgs.13522/dados/ultimos/1?formato=json" 
         }
         resultados = {}
         for nome, url in apis.items():
-            response = requests.get(url, timeout=5)
-            if response.status_code == 200:
-                dado = response.json()[0]
-                resultados[nome] = (float(dado['valor']), dado['data'])
+            r = requests.get(url, timeout=5)
+            if r.status_code == 200:
+                d = r.json()[0]
+                resultados[nome] = (float(d['valor']), d['data'])
             else:
-                resultados[nome] = (0.0, "Erro")
+                resultados[nome] = (0.0, "-")
         return resultados
     except:
         return None
 
-def extrair_texto_pdf(file):
-    """Lê o conteúdo de texto de um arquivo PDF carregado"""
-    texto_completo = ""
-    try:
-        with pdfplumber.open(file) as pdf:
-            for page in pdf.pages:
-                texto_completo += page.extract_text() + "\n"
-        return texto_completo
-    except Exception as e:
-        return None
-
-def analisar_documento_ia(texto):
-    """Usa o Gemini para ler o contrato e extrair números"""
+def extrair_dados_ia(conteudo, tipo_arquivo):
+    """
+    Função Universal: Aceita Texto (do PDF) ou Imagem (do JPG)
+    e envia para o Gemini extrair os dados.
+    """
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-1.5-flash')
         
-        prompt = f"""
-        Analise o texto deste contrato bancário/imobiliário e extraia APENAS os seguintes dados em formato JSON:
-        1. "valor_financiado": (float, valor total da dívida/mútuo)
-        2. "prazo_meses": (int, número total de parcelas)
-        3. "taxa_juros_anual": (float, taxa de juros nominal anual)
-        
-        Se não encontrar algum dado, tente estimar ou coloque 0.
-        Retorne APENAS o JSON puro, sem markdown.
-        
-        Texto do Contrato:
-        {texto[:15000]} 
+        prompt_texto = """
+        Atue como um especialista em extração de dados bancários. Analise este documento e retorne um JSON estrito.
+        Extraia:
+        1. "banco": (Nome do Banco/Instituição)
+        2. "contrato": (Número do contrato)
+        3. "nomes": (Nome do mutuário/devedor principal)
+        4. "valor_financiado": (float, valor da dívida/compra e venda)
+        5. "prazo_meses": (int, total de parcelas)
+        6. "taxa_juros_anual": (float, taxa nominal anual - procure por 'Nominal' ou 'Efetiva')
+
+        Se não achar algo, coloque null ou 0. Retorne APENAS o JSON.
         """
-        # Limitamos a 15k caracteres para caber no prompt rápido
-        
-        response = model.generate_content(prompt)
-        # Limpeza básica para garantir que é JSON
-        json_str = response.text.replace("```json", "").replace("```", "")
+
+        if tipo_arquivo == 'imagem':
+            # Para imagens, passamos o objeto imagem direto + prompt
+            response = model.generate_content([prompt_texto, conteudo])
+        else:
+            # Para texto (PDF), passamos o texto montado
+            response = model.generate_content(prompt_texto + f"\n\nTexto do Documento:\n{conteudo[:20000]}")
+
+        # Limpeza do JSON
+        json_str = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(json_str)
+
     except Exception as e:
-        st.error(f"Erro na extração IA: {e}")
+        st.error(f"Erro na análise IA: {e}")
         return None
 
-def gerar_laudo_ia(dados_pericia):
-    """Gera o laudo jurídico final"""
+def ler_pdf(file):
+    texto = ""
+    with pdfplumber.open(file) as pdf:
+        for page in pdf.pages:
+            texto += page.extract_text() or ""
+    return texto
+
+def gerar_laudo_final(dados):
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-1.5-flash')
         
         prompt = f"""
-        Você é James Sebastian, perito judicial. Escreva um LAUDO TÉCNICO PERICIAL JURÍDICO (Markdown).
+        Escreva um LAUDO TÉCNICO PERICIAL (Revisional Bancária).
+        Use formatação Markdown profissional.
+
+        QUALIFICAÇÃO:
+        - Mutuário: {dados['nome_cliente']}
+        - Banco: {dados['nome_banco']}
+        - Contrato nº: {dados['numero_contrato']}
         
-        DADOS:
-        - Valor: R$ {dados_pericia['valor_financiado']} | Prazo: {dados_pericia['prazo']} meses | Taxa: {dados_pericia['taxa_juros']}% a.a.
-        - Irregularidade: Incorporação de Juros (Cód 410) - Anatocismo.
-        - Ocorrências: {dados_pericia['ocorrencias']} meses.
+        DADOS TÉCNICOS:
+        - Valor: R$ {dados['valor_financiado']}
+        - Prazo: {dados['prazo_meses']} meses
+        - Taxa Contratual: {dados['juros_anuais']}% a.a.
         
-        FINANCEIRO:
-        - Saldo Banco: R$ {dados_pericia['saldo_banco']}
-        - Saldo Justo (SAC Puro): R$ {dados_pericia['saldo_justo']}
-        - DIFERENÇA (PREJUÍZO): R$ {dados_pericia['diferenca']}
+        ACHADOS (IRREGULARIDADES):
+        - Prática identificada: Anatocismo via "Incorporação de Juros" (Cód. 410).
+        - Ocorrências: {dados['ocorrencias']} meses com amortização negativa.
+        - Saldo Banco (Viciado): R$ {dados['saldo_banco']}
+        - Saldo Recalculado (Justo): R$ {dados['saldo_justo']}
+        - DIFERENÇA A RECUPERAR: R$ {dados['diferenca']}
         
-        ESTRUTURA:
-        1. Objeto da Perícia.
-        2. Metodologia (Expurgo Súmula 121 STF).
-        3. Quesitos Técnicos (Análise da Incorporação e Amortização Negativa).
-        4. Conclusão (Forte e técnica).
+        ESCREVA OS TÓPICOS:
+        1. Identificação (Use os dados da qualificação acima).
+        2. Do Objeto (Revisão de contrato habitacional).
+        3. Da Metodologia (Recálculo linear expurgando anatocismo - Súmula 121 STF).
+        4. Dos Quesitos e Constatações (Explique o dano financeiro).
+        5. Conclusão Pericial.
         """
-        response = model.generate_content(prompt)
-        return response.text
+        return model.generate_content(prompt).text
     except Exception as e:
         return f"Erro ao gerar laudo: {e}"
 
-# --- INTERFACE VISUAL ---
+# --- INTERFACE ---
 
 st.title("⚖️ James Sebastian AI - Auditoria Contratual")
-st.markdown("**Sistema de Perícia Forense Automatizada** | Integração Bacen & Google Gemini")
+st.markdown("**Sistema Integrado:** PDF/Imagem -> OCR IA -> Laudo Jurídico")
 
-# --- BARRA LATERAL (INPUTS E UPLOAD) ---
+# --- BARRA LATERAL (UPLOAD E DADOS) ---
 with st.sidebar:
-    st.header("📂 Documentação")
-    uploaded_file = st.file_uploader("Subir Contrato/Extrato (PDF)", type="pdf")
+    st.header("1. Upload de Documentos")
+    st.info("Suba fotos (JPG) ou arquivos (PDF) do contrato/extrato.")
     
-    if uploaded_file is not None:
-        if st.button("✨ Extrair Dados Automaticamente (IA)"):
-            with st.spinner("Lendo documento e extraindo parâmetros..."):
-                texto = extrair_texto_pdf(uploaded_file)
-                if texto:
-                    dados_extraidos = analisar_documento_ia(texto)
-                    if dados_extraidos:
-                        st.session_state.valor_financiado = float(dados_extraidos.get('valor_financiado', 0))
-                        st.session_state.prazo_meses = int(dados_extraidos.get('prazo_meses', 0))
-                        st.session_state.juros_anuais = float(dados_extraidos.get('taxa_juros_anual', 0))
-                        st.success("Dados extraídos com sucesso!")
-                        st.rerun() # Recarrega a página com os novos dados
-                    else:
-                        st.error("IA não conseguiu identificar os padrões.")
-                else:
-                    st.error("Não foi possível ler o PDF.")
+    arquivo = st.file_uploader("Selecione o arquivo", type=["pdf", "jpg", "jpeg", "png"])
+    
+    if arquivo and st.button("🔍 Extrair Dados com IA"):
+        with st.spinner("A IA está lendo o documento..."):
+            dados_extraidos = None
+            
+            # Lógica de decisão: Imagem vs PDF
+            if arquivo.type == "application/pdf":
+                texto_pdf = ler_pdf(arquivo)
+                if texto_pdf:
+                    dados_extraidos = extrair_dados_ia(texto_pdf, 'texto')
+            else:
+                # É imagem (JPG/PNG)
+                imagem = Image.open(arquivo)
+                dados_extraidos = extrair_dados_ia(imagem, 'imagem')
+            
+            # Preencher campos se sucesso
+            if dados_extraidos:
+                st.session_state.nome_cliente = dados_extraidos.get('nomes', 'Não Identificado')
+                st.session_state.nome_banco = dados_extraidos.get('banco', 'Instituição Financeira')
+                st.session_state.numero_contrato = str(dados_extraidos.get('contrato', 'S/N'))
+                
+                val = float(dados_extraidos.get('valor_financiado', 0))
+                prz = int(dados_extraidos.get('prazo_meses', 0))
+                jur = float(dados_extraidos.get('taxa_juros_anual', 0))
+                
+                if val > 0: st.session_state.valor_financiado = val
+                if prz > 0: st.session_state.prazo_meses = prz
+                if jur > 0: st.session_state.juros_anuais = jur
+                
+                st.success("Leitura concluída com sucesso!")
+                st.rerun()
+            else:
+                st.error("Não foi possível extrair dados legíveis.")
 
     st.divider()
-    st.header("1. Parâmetros do Contrato")
+    st.header("2. Dados Identificados")
+    # Campos editáveis (preenchidos pela IA ou manual)
+    st.session_state.nome_cliente = st.text_input("Nome do Mutuário", st.session_state.nome_cliente)
+    st.session_state.nome_banco = st.text_input("Banco", st.session_state.nome_banco)
+    st.session_state.numero_contrato = st.text_input("Nº Contrato", st.session_state.numero_contrato)
     
-    # Inputs conectados ao Session State (permite auto-preenchimento)
-    valor_financiado = st.number_input("Valor Financiado (R$)", value=st.session_state.valor_financiado, step=1000.00, format="%.2f")
-    prazo_meses = st.number_input("Prazo Total (Meses)", value=st.session_state.prazo_meses)
-    juros_anuais = st.number_input("Taxa de Juros Anual (%)", value=st.session_state.juros_anuais)
+    st.subheader("Financeiro")
+    st.session_state.valor_financiado = st.number_input("Valor Financiado (R$)", value=float(st.session_state.valor_financiado), format="%.2f")
+    st.session_state.prazo_meses = st.number_input("Prazo (Meses)", value=int(st.session_state.prazo_meses))
+    st.session_state.juros_anuais = st.number_input("Juros Anuais (%)", value=float(st.session_state.juros_anuais))
     
-    st.header("2. Cenário de Irregularidades")
-    ocorrencias_410 = st.slider("Qtd. Incorporações (Cód 410)", 0, 30, 5)
-    valor_incorporado_medio = st.number_input("Valor Médio Incorporado (R$)", value=2500.00)
+    st.divider()
+    st.header("3. Simulação de Fraude")
+    ocorrencias = st.slider("Meses com Incorporação (410)", 0, 60, 5)
+    valor_inc = st.number_input("Valor Médio Incorporado", value=2500.00)
 
-# --- DASHBOARD BACEN ---
+# --- CORPO PRINCIPAL ---
+
+# 1. Indicadores
 indices = obter_indices_bacen()
 if indices:
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Selic", f"{indices['Selic Meta'][0]}%")
-    c2.metric("TR Mensal", f"{indices['TR (Mensal)'][0]}%")
-    c3.metric("IPCA 12m", f"{indices['IPCA (12m)'][0]}%")
-    c4.metric("Status API", "Online 🟢")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Selic Hoje", f"{indices['Selic'][0]}%")
+    c2.metric("TR Mensal", f"{indices['TR'][0]}%")
+    c3.metric("IPCA 12m", f"{indices['IPCA'][0]}%")
 
 st.divider()
 
-# --- MOTOR DE CÁLCULO ---
-def calcular_sac_puro(valor, meses, taxa_anual):
-    taxa_mensal = (1 + taxa_anual/100)**(1/12) - 1
-    amortizacao = valor / meses
+# 2. Cálculos (Core)
+def calcular_cenarios(valor, meses, taxa, ocr, v_inc):
+    # SAC Puro
+    taxa_mes = (1 + taxa/100)**(1/12) - 1
+    amort = valor / meses
     saldo = valor
-    dados = []
-    for i in range(1, meses + 1):
-        juros = saldo * taxa_mensal
-        saldo -= amortizacao
-        if saldo < 0: saldo = 0
-        dados.append({"Mês": i, "Saldo Devedor": saldo, "Cenário": "SAC Legal"})
-    return pd.DataFrame(dados)
-
-def simular_banco(df_sac, ocorrencias, valor_inc):
-    df = df_sac.copy()
-    df["Cenário"] = "Banco (Viciado)"
-    saldos = []
-    saldo_atual = valor_financiado
-    indices_inc = np.linspace(10, 50, ocorrencias, dtype=int)
+    dados_sac = []
     
-    for i in range(len(df)):
-        amort = valor_financiado / prazo_meses
-        if (i+1) in indices_inc:
-            saldo_atual += valor_inc # Anatocismo
+    # Banco Viciado
+    saldo_banco = valor
+    dados_banco = []
+    indices_fraude = np.linspace(10, meses-10, ocr, dtype=int) if ocr > 0 else []
+
+    for i in range(1, meses + 1):
+        # Calc SAC
+        juros_sac = saldo * taxa_mes
+        saldo -= amort
+        if saldo < 0: saldo = 0
+        dados_sac.append(saldo)
+        
+        # Calc Banco
+        amort_banco = valor / meses
+        if i in indices_fraude:
+            saldo_banco += v_inc # Incorporação
         else:
-            saldo_atual -= amort
-        if saldo_atual < 0: saldo_atual = 0
-        saldos.append(saldo_atual)
-    df["Saldo Devedor"] = saldos
-    return df
+            saldo_banco -= amort_banco
+        if saldo_banco < 0: saldo_banco = 0
+        dados_banco.append(saldo_banco)
+        
+    return pd.DataFrame({"Mês": range(1, meses+1), "SAC": dados_sac, "Banco": dados_banco})
 
-# Execução
-df_sac = calcular_sac_puro(valor_financiado, prazo_meses, juros_anuais)
-df_banco = simular_banco(df_sac, ocorrencias_410, valor_incorporado_medio)
+df = calcular_cenarios(st.session_state.valor_financiado, 
+                       st.session_state.prazo_meses, 
+                       st.session_state.juros_anuais, 
+                       ocorrencias, valor_inc)
 
-# Resultados Hoje (Mês 52 simulado)
-mes_ref = 52 if prazo_meses > 52 else prazo_meses - 1
-saldo_sac = df_sac.iloc[mes_ref]['Saldo Devedor']
-saldo_banco = df_banco.iloc[mes_ref]['Saldo Devedor']
-diferenca = saldo_banco - saldo_sac
+# Pega saldo final simulado (aprox mês 60 ou atual)
+mes_atual = min(60, st.session_state.prazo_meses)
+s_banco = df.iloc[mes_atual-1]['Banco']
+s_sac = df.iloc[mes_atual-1]['SAC']
+dif = s_banco - s_sac
 
-# --- ABAS DE RESULTADOS ---
-t1, t2, t3 = st.tabs(["📊 Análise Gráfica", "📝 Laudo Jurídico IA", "📂 Dados Brutos"])
+# 3. Visualização e Laudo
+tab1, tab2 = st.tabs(["📊 Gráficos e Números", "⚖️ Laudo Pericial Pronto"])
 
-with t1:
-    col1, col2 = st.columns(2)
-    col1.metric("Saldo Banco (Cobrado)", f"R$ {saldo_banco:,.2f}", delta_color="inverse")
-    col2.metric("Prejuízo Detectado", f"R$ {diferenca:,.2f}", delta="- Valor a Recuperar", delta_color="normal")
+with tab1:
+    col_a, col_b = st.columns(2)
+    col_a.metric("Saldo Devedor (Banco)", f"R$ {s_banco:,.2f}", delta_color="inverse")
+    col_b.metric("Excesso Cobrado", f"R$ {dif:,.2f}", delta="- Valor a Restituir")
     
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df_sac['Mês'], y=df_sac['Saldo Devedor'], name='SAC Justo', line=dict(color='green', dash='dash')))
-    fig.add_trace(go.Scatter(x=df_banco['Mês'], y=df_banco['Saldo Devedor'], name='Banco (Anatocismo)', line=dict(color='red')))
-    fig.update_layout(title="Evolução do Saldo Devedor: Legal vs Ilegal")
+    fig.add_trace(go.Scatter(x=df['Mês'], y=df['SAC'], name='Evolução Legal', line=dict(color='green', dash='dash')))
+    fig.add_trace(go.Scatter(x=df['Mês'], y=df['Banco'], name='Evolução Banco', line=dict(color='red')))
+    fig.update_layout(title="Comparativo de Evolução da Dívida", height=400)
     st.plotly_chart(fig, use_container_width=True)
 
-with t2:
-    st.subheader("Gerador de Peças Jurídicas")
-    if st.button("📄 Redigir Laudo Pericial Completo"):
-        with st.spinner("Analisando jurisprudência e calculando..."):
-            dados = {
-                "valor_financiado": f"{valor_financiado:,.2f}",
-                "prazo": prazo_meses,
-                "taxa_juros": juros_anuais,
-                "ocorrencias": ocorrencias_410,
-                "saldo_banco": f"{saldo_banco:,.2f}",
-                "saldo_justo": f"{saldo_sac:,.2f}",
-                "diferenca": f"{diferenca:,.2f}"
-            }
-            texto_laudo = gerar_laudo_ia(dados)
-            st.markdown(texto_laudo)
-            st.download_button("Baixar .txt", texto_laudo, "laudo_final.txt")
-
-with t3:
-    st.dataframe(df_banco)
+with tab2:
+    st.subheader("Gerador de La
