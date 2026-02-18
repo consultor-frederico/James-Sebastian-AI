@@ -23,7 +23,7 @@ st.set_page_config(
 if 'dados_carregados' not in st.session_state:
     st.session_state.dados_carregados = False
 
-# Campos iniciam vazios ou zerados para preenchimento manual ou via IA
+# Campos iniciam vazios para preenchimento manual ou via IA
 campos_init = {
     'nome_cliente': "",
     'nome_banco': "",
@@ -37,11 +37,12 @@ for campo, valor in campos_init.items():
     if campo not in st.session_state:
         st.session_state[campo] = valor
 
-# --- FUNÇÃO PARA BUSCA DINÂMICA DO MODELO ---
+# --- FUNÇÃO PARA BUSCA DINÂMICA DO MODELO (Resolve Erro 404) ---
 def buscar_melhor_modelo():
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         modelos_disponiveis = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        # Tenta as versões mais estáveis primeiro
         prioridades = ['models/gemini-1.5-flash', 'models/gemini-1.5-flash-latest', 'models/gemini-flash-latest']
         for modelo in prioridades:
             if modelo in modelos_disponiveis: return modelo
@@ -49,18 +50,21 @@ def buscar_melhor_modelo():
     except:
         return 'gemini-1.5-flash'
 
-# --- FUNÇÕES DE MERCADO ---
+# --- FUNÇÕES DE MERCADO (Dólar, Euro e Bacen) ---
 @st.cache_data(ttl=3600)
 def obter_indices_completos():
     hoje = date.today().strftime("%d/%m/%Y")
-    res = {"data": hoje, "Selic": 11.25, "TR": 0.082, "IPCA": 4.51, "Dolar": 5.02, "Euro": 5.42}
+    res = {"data": hoje, "Selic": 11.25, "TR": 0.082, "IPCA": 4.51, "Dolar": 5.0, "Euro": 5.4}
     try:
+        # Bacen
         series = {"Selic": 432, "TR": 226, "IPCA": 13522}
         for nome, cod in series.items():
             r = requests.get(f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{cod}/dados/ultimos/1?formato=json", timeout=3)
             if r.status_code == 200: res[nome] = float(r.json()[0]['valor'])
+        # Câmbio
         c = requests.get("https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL", timeout=3).json()
-        res["Dolar"] = float(c["USDBRL"]["bid"]); res["Euro"] = float(c["EURBRL"]["bid"])
+        res["Dolar"] = float(c["USDBRL"]["bid"])
+        res["Euro"] = float(c["EURBRL"]["bid"])
     except: pass 
     return res
 
@@ -70,7 +74,7 @@ def extrair_dados_ia(arquivos):
         genai.configure(api_key=GEMINI_API_KEY)
         modelo_nome = buscar_melhor_modelo()
         model = genai.GenerativeModel(modelo_nome)
-        prompt = "Analise os documentos e extraia um JSON: {'banco': str, 'contrato': str, 'nomes': str, 'valor_financiado': float, 'prazo_meses': int, 'taxa_juros_anual': float}. Se não encontrar o dado, retorne null."
+        prompt = "Analise os documentos e extraia um JSON: {'banco': str, 'contrato': str, 'nomes': str, 'valor_financiado': float, 'prazo_meses': int, 'taxa_juros_anual': float}"
         conteudo = [prompt]
         for arq in arquivos:
             if arq.type == "application/pdf":
@@ -88,10 +92,13 @@ def extrair_dados_ia(arquivos):
 # --- INTERFACE ---
 st.title("⚖️ James Sebastian AI - Auditoria Contratual")
 indices = obter_indices_completos()
-st.write(f"📅 **Indicadores de Hoje ({indices['data']}):**")
+st.write(f"📅 **Indicadores Econômicos de Hoje ({indices['data']}):**")
 c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Selic", f"{indices['Selic']}%"); c2.metric("TR", f"{indices['TR']}%"); c3.metric("IPCA", f"{indices['IPCA']}%")
-c4.metric("Dólar", f"R$ {indices['Dolar']:.2f}"); c5.metric("Euro", f"R$ {indices['Euro']:.2f}")
+c1.metric("Selic", f"{indices['Selic']}%")
+c2.metric("TR", f"{indices['TR']}%")
+c3.metric("IPCA", f"{indices['IPCA']}%")
+c4.metric("Dólar", f"R$ {indices['Dolar']:.2f}")
+c5.metric("Euro", f"R$ {indices['Euro']:.2f}")
 st.divider()
 
 with st.sidebar:
@@ -101,7 +108,6 @@ with st.sidebar:
         with st.spinner("Analisando documentos..."):
             res = extrair_dados_ia(arquivos)
             if res:
-                # Preenche apenas se a IA encontrar, caso contrário mantém vazio ou 0
                 st.session_state.nome_cliente = res.get('nomes') or ""
                 st.session_state.nome_banco = res.get('banco') or ""
                 st.session_state.numero_contrato = str(res.get('contrato') or "")
@@ -109,10 +115,7 @@ with st.sidebar:
                 st.session_state.prazo_meses = int(res.get('prazo_meses') or 0)
                 st.session_state.juros_anuais = float(res.get('taxa_juros_anual') or 0.0)
                 st.session_state.dados_carregados = True
-                st.success("Análise concluída! Verifique os dados abaixo.")
                 st.rerun()
-            else:
-                st.error("A IA não conseguiu ler os arquivos. Por favor, digite os dados manualmente.")
 
     st.divider()
     st.header("📝 2. Dados do Contrato")
@@ -125,7 +128,7 @@ with st.sidebar:
 t1, t2 = st.tabs(["📊 Evolução e Perícia", "📝 Laudo Jurídico"])
 with t1:
     if not st.session_state.dados_carregados or st.session_state.valor_financiado == 0:
-        st.info("💡 Suba o contrato para análise automática ou preencha os dados manualmente na lateral.")
+        st.info("💡 Suba o contrato para análise automática ou preencha os dados na lateral.")
     else:
         v, p, j = st.session_state.valor_financiado, st.session_state.prazo_meses, st.session_state.juros_anuais
         am = v / p
@@ -133,24 +136,23 @@ with t1:
         curr_s, curr_b = v, v
         for i in range(1, p + 1):
             curr_s -= am; sac.append(max(0, curr_s))
-            if i % 10 == 0: curr_b += (curr_b * 0.012) 
-            else: curr_b -= (am * 0.95)
+            if i % 12 == 0: curr_b += (curr_b * 0.015) 
+            else: curr_b -= (am * 0.98)
             ban.append(max(0, curr_b))
         m_ref = min(52, p)
         d_p = ban[m_ref] - sac[m_ref]
-        ca, cb = st.columns(2)
-        ca.metric("Saldo Banco (Mês 52)", f"R$ {ban[m_ref]:,.2f}")
-        cb.metric("Diferença Abusiva", f"R$ {d_p:,.2f}", delta="Prejuízo", delta_color="inverse")
+        col_a, col_b = st.columns(2)
+        col_a.metric("Saldo Banco (Mês 52)", f"R$ {ban[m_ref]:,.2f}")
+        col_b.metric("Prejuízo Detectado", f"R$ {d_p:,.2f}", delta_color="inverse")
         fig = go.Figure()
         fig.add_trace(go.Scatter(y=sac, name='SAC Justo', line=dict(color='green', dash='dash')))
         fig.add_trace(go.Scatter(y=ban, name='Banco Viciado', line=dict(color='red')))
         st.plotly_chart(fig, use_container_width=True)
 
 with t2:
-    if st.session_state.dados_carregados and st.session_state.valor_financiado > 0:
-        if st.button("📄 Gerar Peça"):
+    if st.session_state.dados_carregados:
+        st.subheader("Laudo Jurídico")
+        if st.button("Gerar Laudo"):
             model = genai.GenerativeModel(buscar_melhor_modelo())
-            prompt = f"Laudo para {st.session_state.nome_cliente} contra {st.session_state.nome_banco}. Valor {v}. Anatocismo e Cod 410."
+            prompt = f"Gere um laudo para {st.session_state.nome_cliente} contra {st.session_state.nome_banco}. Valor {v}."
             st.markdown(model.generate_content(prompt).text)
-    else:
-        st.write("Preencha os dados do contrato para gerar o laudo.")
