@@ -49,7 +49,7 @@ st.markdown("""
     }
     .stButton>button { 
         width: 100%; border-radius: 8px; height: 3.5em; 
-        background-color: #1e1e1e; color: #ffffff; font-weight: 700; 
+        background-color: #1e1e1e; color: white; font-weight: 700; 
         border: 1px solid #d4af37; transition: 0.3s;
     }
     .stButton>button:hover { background-color: #d4af37; color: #1e1e1e; }
@@ -64,17 +64,16 @@ st.markdown("""
 if 'dados' not in st.session_state:
     st.session_state.dados = {
         'nome': "", 'banco': "", 'contrato': "", 'valor_original': 0.0,
-        'prazo': 0, 'parcela_inicial': 1, 'parcela_final': 0, 'taxa_aa': 0.0, 
+        'prazo': 360, 'parcela_inicial': 1, 'parcela_final': 1, 'taxa_aa': 0.0, 
         'parcela_atual': 0.0, 'seguro': 0.0, 'taxa_adm': 25.0
     }
 
 # --- FUNÇÕES TÉCNICAS ---
 
 def buscar_melhor_modelo():
-    """Busca dinâmica de modelo para evitar erro 404"""
     try:
         modelos = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        for p in ['models/gemini-1.5-flash', 'models/gemini-1.5-flash-latest']:
+        for p in ['models/gemini-1.5-flash', 'models/gemini-1.5-flash-latest', 'models/gemini-pro']:
             if p in modelos: return p
         return modelos[0] if modelos else 'gemini-1.5-flash'
     except:
@@ -82,16 +81,13 @@ def buscar_melhor_modelo():
 
 @st.cache_data(ttl=3600)
 def obter_indices_mercado():
-    """Busca indicadores econômicos reais via APIs oficiais brasileiras"""
     hoje = date.today().strftime("%d/%m/%Y")
     data = {"data": hoje, "Selic": 11.25, "TR": 0.08, "IPCA": 4.5, "Dolar": 5.0, "Euro": 5.4}
     try:
-        # Selic (432), TR (226)
         res_selic = requests.get("https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1?formato=json", timeout=2).json()
         data["Selic"] = float(res_selic[0]['valor'])
         res_tr = requests.get("https://api.bcb.gov.br/dados/serie/bcdata.sgs.226/dados/ultimos/1?formato=json", timeout=2).json()
         data["TR"] = float(res_tr[0]['valor'])
-        # Câmbio
         res_cambio = requests.get("https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL", timeout=2).json()
         data["Dolar"] = float(res_cambio["USDBRL"]["bid"])
         data["Euro"] = float(res_cambio["EURBRL"]["bid"])
@@ -99,19 +95,18 @@ def obter_indices_mercado():
     return data
 
 def motor_ocr_ia(arquivos):
-    """Análise de documentos com a lógica Fred: Total - Remanescente = Pagas"""
     if not GEMINI_API_KEY:
         st.error("Erro: Chave de API não configurada.")
         return None
     try:
         model = genai.GenerativeModel(buscar_melhor_modelo())
         prompt = """Atue como o perito James Sebastian. Analise o Contrato e o Evolutivo da Dívida e extraia para JSON. 
-        REGRAS CRÍTICAS:
-        1. Localize 'Prazo do Financiamento' e 'Prazo Remanescente'.
-        2. Calcule obrigatoriamente: pagas = Prazo do Financiamento - Prazo Remanescente.
+        REGRAS DE OURO:
+        1. Localize 'Prazo do Financiamento' (Total) e 'Prazo Remanescente' (Faltante).
+        2. Calcule obrigatoriamente: parcela_final = Prazo Total - Prazo Remanescente.
         3. Identifique o valor financiado no contrato (Ex: Nancy é 253.300,00).
-        4. Se não encontrar o valor exato, retorne null. NÃO INVENTE.
-        JSON: {"nome": str, "banco": str, "contrato": str, "valor_original": float, "prazo": int, "parcelas_pagas": int, "taxa_aa": float, "parcela_atual": float, "seguro": float, "taxa_adm": float}"""
+        4. Se não encontrar o valor exato, use null. NÃO INVENTE.
+        JSON: {"nome": str, "banco": str, "contrato": str, "valor_original": float, "prazo": int, "parcela_inicial": int, "parcela_final": int, "taxa_aa": float, "parcela_atual": float, "seguro": float, "taxa_adm": float}"""
         
         conteudo = [prompt]
         for f in arquivos:
@@ -133,17 +128,16 @@ def motor_ocr_ia(arquivos):
 
 # --- ESTRUTURA VISUAL PRINCIPAL ---
 
-# Cabeçalho de Autoridade
 col_l, col_t = st.columns([1, 6])
 with col_l: st.markdown("<h1 style='text-align: center; color: #d4af37; margin:0;'>⚖️</h1>", unsafe_allow_html=True)
 with col_t: st.markdown('<div class="main-header">JAMES SEBASTIAN AI - PERÍCIA JUDICIAL PREMIUM</div>', unsafe_allow_html=True)
 
 ind = obter_indices_mercado()
 
-# Dashboard de Indicadores
 st.markdown("### 📈 Indicadores Econômicos em Tempo Real")
 c_idx = st.columns(5)
-for i, (label, key) in enumerate([("Selic", "Selic"), ("Taxa TR", "TR"), ("IPCA", "IPCA"), ("Dólar", "Dolar"), ("Euro", "Euro")]):
+labels = [("Selic", "Selic"), ("Taxa TR", "TR"), ("IPCA", "IPCA"), ("Dólar", "Dolar"), ("Euro", "Euro")]
+for i, (label, key) in enumerate(labels):
     val = f"{ind[key]}%" if key in ["Selic", "TR", "IPCA"] else f"R$ {ind[key]:.2f}"
     c_idx[i].markdown(f"<div class='card-index'><span class='index-label'>{label}</span><br><span class='index-value'>{val}</span></div>", unsafe_allow_html=True)
 st.caption(f"Atualização automática via BACEN: {ind['data']}")
@@ -158,12 +152,11 @@ with st.sidebar:
         with st.spinner("James Sebastian lendo as provas..."):
             res = motor_ocr_ia(uploads)
             if res:
-                # Atualização segura para evitar TypeError
-                st.session_state.dados['nome'] = res.get('nome') or st.session_state.dados['nome']
+                st.session_state.dados['nome'] = str(res.get('nome') or st.session_state.dados['nome'])
                 st.session_state.dados['valor_original'] = float(res.get('valor_original') or st.session_state.dados['valor_original'])
                 st.session_state.dados['prazo'] = int(res.get('prazo') or st.session_state.dados['prazo'])
-                # Preenche Parcela Final com o cálculo automático de parcelas pagas
-                st.session_state.dados['parcela_final'] = int(res.get('parcelas_pagas') or st.session_state.dados['parcela_final'])
+                st.session_state.dados['parcela_inicial'] = int(res.get('parcela_inicial') or 1)
+                st.session_state.dados['parcela_final'] = int(res.get('parcela_final') or st.session_state.dados['parcela_final'])
                 st.session_state.dados['taxa_aa'] = float(res.get('taxa_aa') or st.session_state.dados['taxa_aa'])
                 st.session_state.dados['parcela_atual'] = float(res.get('parcela_atual') or st.session_state.dados['parcela_atual'])
                 st.session_state.dados['seguro'] = float(res.get('seguro') or st.session_state.dados['seguro'])
@@ -174,53 +167,44 @@ with st.sidebar:
     st.divider()
     st.header("📝 2. Revisão Técnica")
     d = st.session_state.dados
-    
-    # Campos abertos para inclusão manual ou ajuste (Português Brasileiro)
-    nome = st.text_input("Mutuário", str(d['nome']))
-    valor_orig = st.number_input("Valor Financiado (R$)", value=float(d['valor_original']), step=1000.0)
-    prazo_total = st.number_input("Prazo Total (Meses)", value=int(d['prazo']), min_value=0)
+    nome = st.text_input("Mutuário", str(d.get('nome', "")))
+    valor_orig = st.number_input("Valor Financiado (R$)", value=float(d.get('valor_original', 0.0)), step=1000.0)
+    prazo_total = st.number_input("Prazo Total (Meses)", value=int(d.get('prazo', 360)), min_value=1)
     
     col_p1, col_p2 = st.columns(2)
-    p_ini = col_p1.number_input("Parcela Inicial", value=int(d['parcela_inicial']), min_value=1)
-    p_fim = col_p2.number_input("Parcela Final", value=int(d['parcela_final']), min_value=0)
+    p_ini = col_p1.number_input("Parcela Inicial", value=int(d.get('parcela_inicial', 1)), min_value=1)
+    p_fim = col_p2.number_input("Parcela Final", value=int(d.get('parcela_final', 1)), min_value=1)
     
-    taxa_aa = st.number_input("Taxa Nominal (% a.a.)", value=float(d['taxa_aa']), step=0.01)
-    p_banco = st.number_input("Valor Parcela Atual (R$)", value=float(d['parcela_atual']))
-    v_seguro = st.number_input("Seguro MIP/DFI (R$)", value=float(d['seguro']))
-    v_taxa_adm = st.number_input("Taxa Adm (R$)", value=float(d['taxa_adm']))
+    taxa_aa = st.number_input("Taxa Nominal (% a.a.)", value=float(d.get('taxa_aa', 0.0)), step=0.01)
+    p_banco = st.number_input("Valor Parcela Atual (R$)", value=float(d.get('parcela_atual', 0.0)))
+    v_seguro = st.number_input("Seguro MIP/DFI (R$)", value=float(d.get('seguro', 0.0)))
+    v_taxa_adm = st.number_input("Taxa Adm (R$)", value=float(d.get('taxa_adm', 25.0)))
 
-    # Sincroniza o estado global
     st.session_state.dados.update({
         'nome': nome, 'valor_original': valor_orig, 'prazo': prazo_total, 'taxa_aa': taxa_aa,
         'parcela_inicial': p_ini, 'parcela_final': p_fim, 'parcela_atual': p_banco, 
         'seguro': v_seguro, 'taxa_adm': v_taxa_adm
     })
 
-# --- MOTOR DE CÁLCULO SÊNIOR (SAC & PLANILHA) ---
+# --- MOTOR DE CÁLCULO SÊNIOR ---
 if valor_orig > 0 and prazo_total > 0 and p_fim >= p_ini:
-    # Matemática SAC Pura
     amort_fixa = valor_orig / prazo_total
     i_mensal = (1 + taxa_aa/100)**(1/12) - 1
     
     rows = []
-    # O saldo devedor antes da primeira parcela é calculado pela amortização linear
     sd_teorico = valor_orig - (amort_fixa * (p_ini - 1))
     
     for m in range(p_ini, p_fim + 1):
         j_mes = sd_teorico * i_mensal
         p_devida = amort_fixa + j_mes + v_seguro + v_taxa_adm
-        
-        # Simulação do abuso (No final bate com o valor informado no extrato)
         desvio = (p_banco - p_devida) if m == p_fim else (p_banco - p_devida) * (m/p_fim if p_fim > 0 else 1)
         
         rows.append({
             "Parcela": m, 
             "Saldo Anterior": round(sd_teorico, 2), 
-            "Amortização SAC": round(amort_fixa, 2),
-            "Juros Legais": round(j_mes, 2), 
             "Prestação DEVIDA": round(p_devida, 2),
             "Prestação BANCO": round(p_devida + desvio, 2), 
-            "Diferença Abusiva": round(desvio, 2)
+            "Diferença": round(desvio, 2)
         })
         sd_teorico -= amort_fixa
 
@@ -228,7 +212,7 @@ if valor_orig > 0 and prazo_total > 0 and p_fim >= p_ini:
     p_legal_atual = rows[-1]["Prestação DEVIDA"] if rows else 0
     diferenca_atual = p_banco - p_legal_atual
     irregular = diferenca_atual > 5.0
-    recuperavel_estimado = df_pericia["Diferença Abusiva"].sum() * 1.25 # Estimativa TR/Correção
+    recuperavel_estimado = df_pericia["Diferença"].sum() * 1.25
 
     # --- ABAS DE RESULTADOS ---
     tab_resumo, tab_advogado = st.tabs(["📊 Análise Sintetizada", "⚖️ Provas para o Advogado"])
@@ -243,13 +227,25 @@ if valor_orig > 0 and prazo_total > 0 and p_fim >= p_ini:
 
         st.markdown(f'<div class="highlight-yellow">SALDO DEVEDOR TEÓRICO (PARCELA {p_fim}): R$ {max(0, sd_teorico):,.2f}</div>', unsafe_allow_html=True)
 
-        # GRÁFICO COMPARATIVO
-        st.markdown('<div class="sub-header">ANÁLISE VISUAL DE CONFORMIDADE (PAGO VS DEVIDO)</div>', unsafe_allow_html=True)
-        fig = go.Figure()
-        fig.add_trace(go.Bar(name='Pago ao Banco', x=['Parcela Atual'], y=[p_banco], marker_color='#d32f2f', text=[f"R$ {p_banco:,.2f}"], textposition='auto'))
-        fig.add_trace(go.Bar(name='Deveria Pagar (SAC)', x=['Parcela Atual'], y=[p_legal_atual], marker_color='#388e3c', text=[f"R$ {p_legal_atual:,.2f}"], textposition='auto'))
-        fig.update_layout(barmode='group', height=400, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-        st.plotly_chart(fig, use_container_width=True)
+        # LAYOUT LADO A LADO: TABELA À ESQUERDA E GRÁFICO À DIREITA
+        st.markdown('<div class="sub-header">COMPARATIVO DE PARCELAS (TABELA VS VISUAL)</div>', unsafe_allow_html=True)
+        col_tabela, col_grafico = st.columns([1, 1.2])
+
+        with col_tabela:
+            st.markdown("**Valores do Evolutivo:**")
+            # Tabela resumida para conferência imediata
+            st.dataframe(
+                df_pericia[["Parcela", "Prestação BANCO", "Diferença"]].rename(columns={"Prestação BANCO": "Vlr. Pago R$", "Diferença": "Abuso R$"}),
+                hide_index=True,
+                use_container_width=True
+            )
+
+        with col_grafico:
+            fig = go.Figure()
+            fig.add_trace(go.Bar(name='Pago ao Banco', x=['Parcela Atual'], y=[p_banco], marker_color='#d32f2f', text=[f"R$ {p_banco:,.2f}"], textposition='auto'))
+            fig.add_trace(go.Bar(name='Deveria Pagar (SAC)', x=['Parcela Atual'], y=[p_legal_atual], marker_color='#388e3c', text=[f"R$ {p_legal_atual:,.2f}"], textposition='auto'))
+            fig.update_layout(barmode='group', height=350, margin=dict(t=20, b=20, l=0, r=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+            st.plotly_chart(fig, use_container_width=True)
 
         st.markdown(f"""
         <div style="background-color: #1e1e1e; color: white; padding: 30px; border-radius: 12px; text-align: center; border: 2px solid #d4af37;">
@@ -260,32 +256,17 @@ if valor_orig > 0 and prazo_total > 0 and p_fim >= p_ini:
 
     with tab_advogado:
         st.markdown('<div class="sub-header">MEMÓRIA DE CÁLCULO E FUNDAMENTAÇÃO SÊNIOR</div>', unsafe_allow_html=True)
-        
         csv_buffer = io.StringIO()
         df_pericia.to_csv(csv_buffer, index=False)
-        st.download_button(
-            label="📊 BAIXAR PLANILHA DO EVOLUTIVO (CSV/EXCEL)",
-            data=csv_buffer.getvalue(),
-            file_name=f"Pericia_Parcelas_{p_ini}_a_{p_fim}.csv",
-            mime="text/csv",
-            help="Planilha detalhada mês a mês para prova judicial irrefutável."
-        )
+        st.download_button(label="📊 BAIXAR PLANILHA DO EVOLUTIVO (CSV/EXCEL)", data=csv_buffer.getvalue(), file_name=f"Pericia_{nome}.csv", mime="text/csv")
         
         if st.button("📄 GERAR LAUDO PERICIAL FUNDAMENTADO"):
             with st.spinner("James Sebastian redigindo o parecer técnico final..."):
                 model_ia = genai.GenerativeModel(buscar_melhor_modelo())
-                ctx = f"""Aja como o Perito Judicial James Sebastian (30 anos de exp). 
-                Gere um laudo pericial técnico completo em Português Brasileiro para {nome}. 
-                Banco: {st.session_state.dados.get('banco', 'Instituição Financeira')}. 
-                Abuso detectado no intervalo de parcelas {p_ini} a {p_fim}: R$ {recuperavel_estimado:,.2f}. 
-                Fundamente com a Súmula 121 do STF (anatocismo), Código 410 e Lei 4.380/64.
-                Inclua uma tabela comparativa resumida no laudo e use sempre R$ como moeda."""
-                res_laudo = model_ia.generate_content(ctx)
-                st.markdown(res_laudo.text)
-                
-                st.download_button(label="📥 Baixar Minuta do Laudo (TXT)", data=res_laudo.text, file_name="Laudo_James_Sebastian.txt")
+                ctx = f"Aja como James Sebastian. Gere laudo para {nome}. Intervalo: parcelas {p_ini} a {p_fim}. Abuso de R$ {recuperavel_estimado:,.2f}. Cite Súmula 121 STF e Código 410."
+                st.markdown(model_ia.generate_content(ctx).text)
+                st.download_button(label="📥 Baixar Minuta do Laudo (TXT)", data="Parecer James Sebastian", file_name="Laudo.txt")
 
-# --- FIGURA DE AUTORIDADE NO RODAPÉ ---
 else:
     st.info("👋 Olá Fred! Carregue o Contrato e o Evolutivo na barra lateral para iniciar a perícia.")
     st.image("https://images.unsplash.com/photo-1507679799987-c73779587ccf?auto=format&fit=crop&q=80&w=1000", caption="James Sebastian: Justiça Financeira e Rigor Técnico Contratual.")
