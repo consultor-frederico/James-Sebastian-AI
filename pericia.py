@@ -9,6 +9,7 @@ from PIL import Image
 from datetime import date
 import json
 import io
+import re
 
 # --- CONFIGURAÇÃO E SEGURANÇA (Johnson Mello Edition) ---
 st.set_page_config(page_title="James Sebastian AI - Perícia Premium", layout="wide", page_icon="⚖️")
@@ -60,6 +61,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- INICIALIZAÇÃO DE ESTADO ---
+# Resolve o Erro TypeError garantindo valores padrão numéricos
 if 'dados' not in st.session_state:
     st.session_state.dados = {
         'nome': "", 'banco': "", 'contrato': "", 'valor_original': 0.0,
@@ -81,7 +83,7 @@ def buscar_melhor_modelo():
 
 @st.cache_data(ttl=3600)
 def obter_indices_mercado():
-    """Busca indicadores econômicos reais"""
+    """Busca indicadores econômicos reais via APIs oficiais"""
     hoje = date.today().strftime("%d/%m/%Y")
     data = {"data": hoje, "Selic": 11.25, "TR": 0.08, "IPCA": 4.5, "Dolar": 5.0, "Euro": 5.4}
     try:
@@ -96,19 +98,19 @@ def obter_indices_mercado():
     return data
 
 def motor_ocr_ia(ficheiros):
-    """Extração de dados via IA com lógica de cálculo de parcelas pagas"""
+    """Análise de documentos com proteção total e lógica de parcelas pagas"""
     if not GEMINI_API_KEY:
-        st.error("Erro: API Key não configurada.")
+        st.error("Erro: Chave de API não configurada.")
         return None
     try:
         target_model = buscar_melhor_modelo()
         model = genai.GenerativeModel(target_model)
         
-        prompt = """Atue como James Sebastian. Analise os documentos e extraia os dados para JSON. 
-        REGRAS ESPECÍFICAS DE CÁLCULO:
+        prompt = """Atue como James Sebastian. Analise os documentos e extraia os dados financeiros para JSON. 
+        REGRAS CRÍTICAS:
         1. Localize o 'Prazo do Financiamento' (Prazo Total) e o 'Prazo Remanescente' (Faltante).
         2. Calcule obrigatoriamente: pagas = prazo_total - prazo_remanescente.
-        3. Se não encontrar um valor, use null. NÃO INVENTE.
+        3. Se não encontrar o valor exato, use null. NÃO INVENTE.
         JSON: {"nome": str, "banco": str, "contrato": str, "valor_original": float, "prazo": int, "pagas": int, "taxa_aa": float, "parcela_atual": float, "seguro": float, "taxa_adm": float}"""
         
         conteudo = [prompt]
@@ -116,26 +118,30 @@ def motor_ocr_ia(ficheiros):
             if f.type == "application/pdf":
                 with pdfplumber.open(f) as pdf:
                     texto = "\n".join([p.extract_text() or "" for p in pdf.pages])
-                    conteudo.append(f"Conteúdo: {texto[:12000]}")
+                    conteudo.append(f"Conteúdo do Documento: {texto[:12000]}")
             else:
                 conteudo.append(Image.open(f))
         
         resposta = model.generate_content(conteudo)
-        txt = resposta.text.strip().replace("```json", "").replace("```", "")
-        return json.loads(txt)
+        # Limpeza robusta do JSON (remove markdown)
+        json_match = re.search(r'\{.*\}', resposta.text, re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group())
+        return None
     except Exception as e:
         st.error(f"Falha técnica na análise IA: {e}")
         return None
 
-# --- ESTRUTURA VISUAL ---
+# --- ESTRUTURA VISUAL PRINCIPAL ---
 
+# Cabeçalho de Autoridade
 col_l, col_t = st.columns([1, 6])
 with col_l: st.markdown("<h1 style='text-align: center; color: #d4af37; margin:0;'>⚖️</h1>", unsafe_allow_html=True)
 with col_t: st.markdown('<div class="main-header">JAMES SEBASTIAN AI - PERÍCIA JUDICIAL PREMIUM</div>', unsafe_allow_html=True)
 
 ind = obter_indices_mercado()
 
-# Dashboard de Índices
+# Quadro de Indicadores
 st.markdown("### 📈 Indicadores Económicos em Tempo Real")
 c1, c2, c3, c4, c5 = st.columns(5)
 with c1: st.markdown(f"<div class='card-index'><span class='index-label'>Selic</span><br><span class='index-value'>{ind['Selic']}%</span></div>", unsafe_allow_html=True)
@@ -155,10 +161,10 @@ with st.sidebar:
     uploads = st.file_uploader("Upload de Documentos", accept_multiple_files=True)
     
     if uploads and st.button("🔍 Iniciar Leitura Inteligente"):
-        with st.spinner("Analisando evidências..."):
+        with st.spinner("O perito está a analisar as provas..."):
             res = motor_ocr_ia(uploads)
             if res:
-                # Modificação: Se a IA não achar (null), o campo fica editável com o valor anterior
+                # Atualização seletiva: Só preenche o que encontrar, deixando o resto aberto
                 for k, v in res.items():
                     if v is not None:
                         st.session_state.dados[k] = v
@@ -169,34 +175,40 @@ with st.sidebar:
     st.header("📝 2. Revisão Técnica")
     d = st.session_state.dados
     
-    nome = st.text_input("Mutuário", d['nome'])
-    banco = st.text_input("Banco", d['banco'])
-    contrato_num = st.text_input("Número do Contrato", d['contrato'])
-    valor_orig = st.number_input("Valor Financiado (R$)", value=float(d['valor_original'] or 0.0), step=1000.0)
-    prazo = st.number_input("Prazo Total (Meses)", value=int(d['prazo'] or 360), min_value=1)
-    pagas = st.number_input("Parcelas Pagas", value=int(d['pagas'] or 0), help="Cálculo automático: Prazo Total - Prazo Remanescente")
-    taxa_aa = st.number_input("Taxa Nominal (% a.a.)", value=float(d['taxa_aa'] or 0.0), step=0.01)
-    p_banco = st.number_input("Valor Parcela Atual (R$)", value=float(d['parcela_atual'] or 0.0))
-    v_seguro = st.number_input("Seguro MIP/DFI (R$)", value=float(d['seguro'] or 0.0))
-    v_taxa_adm = st.number_input("Taxa Adm (R$)", value=float(d['taxa_adm'] or 25.0))
+    # Resolve TypeError: garante conversão segura de tipos
+    nome = st.text_input("Mutuário", str(d.get('nome', "")))
+    banco = st.text_input("Banco", str(d.get('banco', "")))
+    contrato_num = st.text_input("Número do Contrato", str(d.get('contrato', "")))
+    valor_orig = st.number_input("Valor Financiado (R$)", value=float(d.get('valor_original') or 0.0), step=1000.0)
+    prazo = st.number_input("Prazo Total (Meses)", value=int(d.get('prazo') or 360), min_value=1)
+    # Lógica solicitada: Parcelas Pagas (Total - Remanescente)
+    pagas = st.number_input("Parcelas Pagas", value=int(d.get('pagas') or 0), help="Cálculo sugerido: Prazo Total - Prazo Remanescente")
+    taxa_aa = st.number_input("Taxa Nominal (% a.a.)", value=float(d.get('taxa_aa') or 0.0), step=0.01)
+    p_banco = st.number_input("Valor Parcela Atual (R$)", value=float(d.get('parcela_atual') or 0.0))
+    v_seguro = st.number_input("Seguro MIP/DFI (R$)", value=float(d.get('seguro') or 0.0))
+    v_taxa_adm = st.number_input("Taxa Adm (R$)", value=float(d.get('taxa_adm') or 25.0))
 
+    # Sincroniza estado da sessão em tempo real
     st.session_state.dados.update({
         'nome': nome, 'banco': banco, 'contrato': contrato_num, 'valor_original': valor_orig, 
         'prazo': prazo, 'pagas': pagas, 'taxa_aa': taxa_aa, 'parcela_atual': p_banco, 
         'seguro': v_seguro, 'taxa_adm': v_taxa_adm
     })
 
-# --- MOTOR FINANCEIRO E GRÁFICOS ---
+# --- MOTOR DE CÁLCULO SÉNIOR (SAC & PLANILHA) ---
 if valor_orig > 0 and prazo > 0:
+    # Matemática SAC Pura
     amort_fixa = valor_orig / prazo
     i_mensal = (1 + taxa_aa/100)**(1/12) - 1
     
+    # Geração da Memória de Cálculo Mês a Mês
     rows = []
     sd_teorico = valor_orig
     for m in range(1, pagas + 1):
         j_mes = sd_teorico * i_mensal
         p_devida = amort_fixa + j_mes + v_seguro + v_taxa_adm
         desvio = (p_banco - p_devida) if m == pagas else (p_banco - p_devida) * (m/pagas)
+        
         rows.append({
             "Mês": m, "Saldo Devedor Anterior": round(sd_teorico, 2), "Amortização SAC": round(amort_fixa, 2),
             "Juros Legais": round(j_mes, 2), "Parcela DEVIDA": round(p_devida, 2),
@@ -208,7 +220,9 @@ if valor_orig > 0 and prazo > 0:
     p_legal_atual = amort_fixa + (max(0, valor_orig - (amort_fixa * (pagas - 1))) * i_mensal) + v_seguro + v_taxa_adm
     diferenca_hoje = p_banco - p_legal_atual
     irregular = diferenca_hoje > 5.0
-    recuperavel_estimado = df_pericia["Diferença Abusiva"].sum() * 1.25
+    
+    # Resolve KeyError: Garante que a coluna existe antes de somar
+    recuperavel_estimado = df_pericia["Diferença Abusiva"].sum() * 1.25 if not df_pericia.empty else 0.0
 
     # --- TABS DE RESULTADOS ---
     tab_resumo, tab_advogado = st.tabs(["📊 Análise Sintetizada", "⚖️ Provas para o Advogado"])
@@ -220,16 +234,17 @@ if valor_orig > 0 and prazo > 0:
             st.write(f"**CLIENTE:** {nome}")
             st.write(f"**BANCO:** {banco}")
         with r2:
-            badge = "status-irregular" if irregular else "status-regular"
-            texto = "CONTRATO IRREGULAR" if irregular else "CONTRATO REGULAR"
-            st.markdown(f"<div style='text-align:right;'><span class='status-badge {badge}'>{texto}</span></div>", unsafe_allow_html=True)
+            b_class = "status-irregular" if irregular else "status-regular"
+            txt_status = "CONTRATO IRREGULAR" if irregular else "CONTRATO REGULAR"
+            st.markdown(f"<div style='text-align:right;'><span class='status-badge {b_class}'>{txt_status}</span></div>", unsafe_allow_html=True)
 
         st.markdown(f'<div class="highlight-yellow">SALDO DEVEDOR ATUALIZADO (LEI): R$ {max(0, sd_teorico):,.2f}</div>', unsafe_allow_html=True)
 
+        # GRÁFICO COMPARATIVO
         st.markdown('<div class="sub-header">ANÁLISE VISUAL DE CONFORMIDADE (PAGO VS DEVIDO)</div>', unsafe_allow_html=True)
         fig = go.Figure()
-        fig.add_trace(go.Bar(name='Pago ao Banco', x=['Prestação'], y=[p_banco], marker_color='#d32f2f', text=[f"R$ {p_banco:,.2f}"], textposition='auto'))
-        fig.add_trace(go.Bar(name='Deveria Pagar (SAC)', x=['Prestação'], y=[p_legal_atual], marker_color='#388e3c', text=[f"R$ {p_legal_atual:,.2f}"], textposition='auto'))
+        fig.add_trace(go.Bar(name='Pago ao Banco', x=['Prestação Mensal'], y=[p_banco], marker_color='#d32f2f', text=[f"R$ {p_banco:,.2f}"], textposition='auto'))
+        fig.add_trace(go.Bar(name='Deveria Pagar (SAC)', x=['Prestação Mensal'], y=[p_legal_atual], marker_color='#388e3c', text=[f"R$ {p_legal_atual:,.2f}"], textposition='auto'))
         fig.update_layout(barmode='group', height=400, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         st.plotly_chart(fig, use_container_width=True)
 
@@ -249,15 +264,16 @@ if valor_orig > 0 and prazo > 0:
             label="📊 DESCARREGAR PLANILHA COMPLETA PARA O PROCESSO (CSV/EXCEL)",
             data=csv_buffer.getvalue(),
             file_name=f"Pericia_Calculo_{nome.replace(' ', '_')}.csv",
-            mime="text/csv",
-            help="Planilha detalhada mês a mês para prova judicial irrefutável."
+            mime="text/csv"
         )
         
         if st.button("📄 GERAR LAUDO PERICIAL FUNDAMENTADO"):
             with st.spinner("James Sebastian está a redigir o parecer técnico final..."):
                 model_ia = genai.GenerativeModel(buscar_melhor_modelo())
-                ctx = f"""Aja como James Sebastian. Gere laudo para {nome}. Banco {banco}. Valor {valor_orig}. 
-                Abuso detetado: R$ {recuperavel_estimado:,.2f}. Cite Súmula 121 STF, Código 410 e Lei 4.380/64."""
+                ctx = f"""Aja como James Sebastian (30 anos de exp). Gere laudo técnico para {nome}. Banco: {banco}. 
+                Valor do financiamento: R$ {valor_orig:,.2f}. Diferença abusiva acumulada: R$ {recuperavel_estimado:,.2f}. 
+                Fundamente com a Súmula 121 do STF (anatocismo), Código 410 e Lei 4.380/64.
+                Inclua uma tabela comparativa resumida."""
                 res_laudo = model_ia.generate_content(ctx)
                 st.markdown(res_laudo.text)
                 
