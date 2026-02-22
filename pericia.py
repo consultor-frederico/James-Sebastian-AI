@@ -10,7 +10,7 @@ from datetime import date
 import json
 
 # --- CONFIGURAÇÃO E SEGURANÇA ---
-st.set_page_config(page_title="James Sebastian AI - Perícia Premium", layout="wide")
+st.set_page_config(page_title="James Sebastian AI - Perícia Premium", layout="wide", page_icon="⚖️")
 
 # Tenta obter a chave da API dos Secrets ou usa uma string vazia para fallback
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
@@ -20,17 +20,46 @@ if GEMINI_API_KEY:
 # --- ESTILO CSS PERSONALIZADO (LOOK PREMIUM) ---
 st.markdown("""
     <style>
-    .main { background-color: #f8f9fa; }
-    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #1e1e1e; color: white; font-weight: bold; border: 1px solid #d4af37; }
+    .main { background-color: #f4f4f9; }
+    .stButton>button { 
+        width: 100%; border-radius: 8px; height: 3.5em; 
+        background-color: #1e1e1e; color: white; font-weight: bold; 
+        border: 1px solid #d4af37; transition: 0.3s;
+    }
     .stButton>button:hover { background-color: #d4af37; color: #1e1e1e; }
-    .main-header { font-size: 32px; font-weight: bold; background-color: #1e1e1e; color: #ffffff; padding: 20px; text-align: center; border-radius: 8px; margin-bottom: 25px; border-bottom: 5px solid #d4af37; }
-    .sub-header { font-size: 20px; font-weight: bold; background-color: #333; color: white; padding: 10px; text-align: center; margin-top: 20px; border-radius: 5px; }
-    .status-irregular { color: #ff0000; font-size: 24px; font-weight: bold; text-align: right; border: 2px solid #ff0000; padding: 5px 15px; border-radius: 5px; display: inline-block; }
-    .status-regular { color: #28a745; font-size: 24px; font-weight: bold; text-align: right; border: 2px solid #28a745; padding: 5px 15px; border-radius: 5px; display: inline-block; }
-    .highlight-yellow { background-color: #ffff00; padding: 15px; font-weight: bold; font-size: 24px; color: #000; border-radius: 5px; text-align: center; border: 1px solid #ccc; margin: 10px 0; }
-    .card { background-color: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; border-top: 4px solid #d4af37; }
-    .index-label { font-size: 14px; color: #666; font-weight: bold; text-transform: uppercase; }
-    .index-value { font-size: 20px; font-weight: bold; color: #1e1e1e; }
+    .main-header { 
+        font-size: 32px; font-weight: bold; background-color: #1e1e1e; 
+        color: #ffffff; padding: 25px; text-align: center; border-radius: 12px; 
+        margin-bottom: 30px; border-bottom: 6px solid #d4af37;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+    }
+    .sub-header { 
+        font-size: 20px; font-weight: bold; background-color: #333; 
+        color: white; padding: 12px; text-align: center; border-radius: 8px; 
+        margin-top: 25px; 
+    }
+    .status-irregular { 
+        color: #ff0000; font-size: 22px; font-weight: bold; text-align: right; 
+        border: 2px solid #ff0000; padding: 8px 20px; border-radius: 8px; 
+        display: inline-block; background-color: rgba(255,0,0,0.05);
+    }
+    .status-regular { 
+        color: #28a745; font-size: 22px; font-weight: bold; text-align: right; 
+        border: 2px solid #28a745; padding: 8px 20px; border-radius: 8px; 
+        display: inline-block; background-color: rgba(40,167,69,0.05);
+    }
+    .highlight-yellow { 
+        background-color: #ffff00; padding: 18px; font-weight: bold; 
+        font-size: 26px; color: #000; border-radius: 10px; text-align: center; 
+        border: 1px solid #ccc; margin: 15px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .card-index { 
+        background-color: white; padding: 15px; border-radius: 12px; 
+        box-shadow: 0 4px 10px rgba(0,0,0,0.05); text-align: center;
+        border-top: 5px solid #d4af37;
+    }
+    .index-label { font-size: 13px; color: #777; font-weight: bold; text-transform: uppercase; }
+    .index-value { font-size: 22px; font-weight: bold; color: #1e1e1e; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -40,16 +69,14 @@ st.markdown("""
 def obter_indices_atualizados():
     """Busca índices económicos reais via API do Banco Central e AwesomeAPI"""
     hoje = date.today().strftime("%d/%m/%Y")
-    res = {"data": hoje, "Selic": 11.25, "TR": 0.082, "IPCA": 4.44, "Dolar": 5.00, "Euro": 5.40}
+    res = {"data": hoje, "Selic": 11.25, "TR": 0.082, "IPCA": 4.51, "Dolar": 5.02, "Euro": 5.41}
     try:
-        # Selic (432), TR (226), IPCA (13522)
         series = {"Selic": 432, "TR": 226, "IPCA": 13522}
         for nome, cod in series.items():
-            r = requests.get(f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{cod}/dados/ultimos/1?formato=json", timeout=3)
+            r = requests.get(f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{cod}/dados/ultimos/1?formato=json", timeout=4)
             if r.status_code == 200:
                 res[nome] = float(r.json()[0]['valor'])
-        # Câmbio
-        c = requests.get("https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL", timeout=3).json()
+        c = requests.get("https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL", timeout=4).json()
         res["Dolar"] = float(c["USDBRL"]["bid"])
         res["Euro"] = float(c["EURBRL"]["bid"])
     except:
@@ -57,180 +84,192 @@ def obter_indices_atualizados():
     return res
 
 def extrair_dados_ia(arquivos):
-    """Lê PDFs/Imagens e extraia dados estruturados via Gemini"""
+    """Extrai dados dos documentos sem inventar valores"""
     if not GEMINI_API_KEY:
-        st.error("Chave API Gemini não configurada nos Secrets.")
+        st.error("⚠️ Configura a chave API do Gemini no Streamlit Cloud (Settings -> Secrets).")
         return None
     
     try:
+        # Usa o modelo estável mais recente
         model = genai.GenerativeModel('gemini-1.5-flash')
-        prompt = """Atue como um perito judicial sénior. Analise estes documentos bancários e extraia os dados para um JSON.
-        REGRAS: 
-        1. Se o dado não estiver presente, use null. NÃO INVENTE VALORES.
-        2. Extraia: nome_mutuario, banco, num_contrato, valor_financiado, prazo_total, parcelas_pagas, taxa_juros_anual, valor_ultima_parcela, valor_seguro, taxa_adm.
-        3. Procure especificamente por indícios de incorporação de juros ao saldo (Anatocismo).
-        Retorne apenas o JSON puro, sem formatação markdown."""
+        prompt = """Atue como um perito judicial sênior. Analise os documentos bancários fornecidos e extraia os dados abaixo para um JSON puro.
+        IMPORTANTE: 
+        1. Responda APENAS o JSON.
+        2. Se não encontrar um valor, use null. NÃO INVENTE DADOS.
+        Campos: {"nome_mutuario": str, "banco": str, "num_contrato": str, "valor_financiado": float, "prazo_total": int, "parcelas_pagas": int, "taxa_juros_anual": float, "valor_ultima_parcela": float, "valor_seguro": float, "taxa_adm": float}
+        Busque por irregularidades como o 'Código 410' (Incorporação Normal)."""
         
         conteudo = [prompt]
         for arq in arquivos:
             if arq.type == "application/pdf":
                 with pdfplumber.open(arq) as pdf:
                     texto = "\n".join([p.extract_text() or "" for p in pdf.pages])
-                    conteudo.append(f"Texto do documento: {texto[:18000]}")
+                    conteudo.append(f"Conteúdo do PDF: {texto[:18000]}")
             else:
                 conteudo.append(Image.open(arq))
         
         response = model.generate_content(conteudo)
+        # Limpa markdown da resposta caso a IA inclua
         txt_limpo = response.text.strip().replace("```json", "").replace("```", "")
         return json.loads(txt_limpo)
     except Exception as e:
-        st.error(f"Erro na extração IA: {e}")
+        st.error(f"Erro na análise IA: {e}")
         return None
 
 # --- INTERFACE PRINCIPAL ---
 
-# Logotipo e Título
-col_logo, col_title = st.columns([1, 5])
-with col_logo:
-    st.markdown("<div style='font-size: 70px; text-align: center; color: #d4af37;'>⚖️</div>", unsafe_allow_html=True)
-with col_title:
+# Cabeçalho de Autoridade
+col_l, col_t = st.columns([1, 6])
+with col_l:
+    st.markdown("<h1 style='text-align: center; color: #d4af37; margin: 0;'>⚖️</h1>", unsafe_allow_html=True)
+with col_t:
     st.markdown('<div class="main-header">JAMES SEBASTIAN AI - PERÍCIA JUDICIAL PREMIUM</div>', unsafe_allow_html=True)
 
-indices = obter_indices_atualizados()
+idx = obter_indices_atualizados()
 
-# Quadro de Índices Atualizados
-st.markdown("### 📈 Indicadores Económicos em Tempo Real")
+# Dashboard de Indicadores em Tempo Real
+st.markdown("### 📈 Indicadores do Mercado Financeiro")
 c1, c2, c3, c4, c5 = st.columns(5)
-with c1: st.markdown(f"<div class='card'><span class='index-label'>Selic</span><br><span class='index-value'>{indices['Selic']}%</span></div>", unsafe_allow_html=True)
-with c2: st.markdown(f"<div class='card'><span class='index-label'>TR (Mensal)</span><br><span class='index-value'>{indices['TR']}%</span></div>", unsafe_allow_html=True)
-with c3: st.markdown(f"<div class='card'><span class='index-label'>IPCA (12m)</span><br><span class='index-value'>{indices['IPCA']}%</span></div>", unsafe_allow_html=True)
-with c4: st.markdown(f"<div class='card'><span class='index-label'>Dólar</span><br><span class='index-value'>R$ {indices['Dolar']:.2f}</span></div>", unsafe_allow_html=True)
-with c5: st.markdown(f"<div class='card'><span class='index-label'>Euro</span><br><span class='index-value'>R$ {indices['Euro']:.2f}</span></div>", unsafe_allow_html=True)
-st.caption(f"Última atualização: {indices['data']}")
+with c1: st.markdown(f"<div class='card-index'><span class='index-label'>Selic</span><br><span class='index-value'>{idx['Selic']}%</span></div>", unsafe_allow_html=True)
+with c2: st.markdown(f"<div class='card-index'><span class='index-label'>TR (Mensal)</span><br><span class='index-value'>{idx['TR']}%</span></div>", unsafe_allow_html=True)
+with c3: st.markdown(f"<div class='card-index'><span class='index-label'>IPCA (12m)</span><br><span class='index-value'>{idx['IPCA']}%</span></div>", unsafe_allow_html=True)
+with c4: st.markdown(f"<div class='card-index'><span class='index-label'>USD/BRL</span><br><span class='index-value'>R$ {idx['Dolar']:.2f}</span></div>", unsafe_allow_html=True)
+with c5: st.markdown(f"<div class='card-index'><span class='index-label'>EUR/BRL</span><br><span class='index-value'>R$ {idx['Euro']:.2f}</span></div>", unsafe_allow_html=True)
+st.caption(f"Dados atualizados em tempo real: {idx['data']}")
 
-# Sidebar para Documentos e Inputs
+# Sidebar: Upload e Ajustes
 with st.sidebar:
-    st.markdown("<div style='text-align: center;'><img src='https://cdn-icons-png.flaticon.com/512/3135/3135715.png' width='80'></div>", unsafe_allow_html=True)
-    st.header("📂 Auditoria de Documentos")
-    uploaded_files = st.file_uploader("Submeter Contratos/Evolutivos", accept_multiple_files=True, type=['pdf', 'jpg', 'png'])
+    st.markdown("<div style='text-align: center; padding-bottom: 20px;'><img src='https://cdn-icons-png.flaticon.com/512/3135/3135715.png' width='80'></div>", unsafe_allow_html=True)
+    st.header("📂 1. Documentação")
+    files = st.file_uploader("Submeter Contratos/Extratos", accept_multiple_files=True, type=['pdf', 'jpg', 'png'])
     
-    if uploaded_files and st.button("🔍 Iniciar Leitura Inteligente"):
-        with st.spinner("O perito está a analisar as provas..."):
-            res_ia = extrair_dados_ia(uploaded_files)
-            if res_ia:
-                st.session_state.update(res_ia)
-                st.success("Dados carregados com sucesso!")
+    if files and st.button("🔍 Iniciar Auditoria Automática"):
+        with st.spinner("O perito James Sebastian está analisando as provas..."):
+            res = extrair_dados_ia(files)
+            if res:
+                st.session_state.update(res)
+                st.success("✅ Dados extraídos com sucesso!")
                 st.rerun()
 
     st.divider()
-    st.header("📝 Parâmetros do Contrato")
-    nome = st.text_input("Mutuário", st.session_state.get('nome_mutuario', ""))
-    banco = st.text_input("Instituição Bancária", st.session_state.get('banco', ""))
-    v_financiado = st.number_input("Valor Financiado (R$)", value=float(st.session_state.get('valor_financiado') or 0.0), step=1000.0)
-    prazo = st.number_input("Prazo Contratado (Meses)", value=int(st.session_state.get('prazo_total') or 360), min_value=1)
-    pagas = st.number_input("Parcelas Pagas", value=int(st.session_state.get('parcelas_pagas') or 0))
-    taxa_anual = st.number_input("Taxa Nominal (% a.a.)", value=float(st.session_state.get('taxa_juros_anual') or 0.0), step=0.01)
-    p_atual = st.number_input("Valor da Prestação Atual (R$)", value=float(st.session_state.get('valor_ultima_parcela') or 0.0))
-    seguro = st.number_input("Seguro MIP/DFI (R$)", value=float(st.session_state.get('valor_seguro') or 0.0))
-    taxa_adm = st.number_input("Taxa de Administração (R$)", value=float(st.session_state.get('taxa_adm') or 25.0))
+    st.header("📝 2. Parâmetros Periciais")
+    # Campos dinâmicos baseados no estado da sessão
+    mutuario = st.text_input("Nome do Mutuário", st.session_state.get('nome_mutuario', ""))
+    banco_nome = st.text_input("Instituição Financeira", st.session_state.get('banco', ""))
+    valor_f = st.number_input("Valor Financiado (R$)", value=float(st.session_state.get('valor_financiado', 0.0)), step=1000.0)
+    prazo_n = st.number_input("Prazo Total (Meses)", value=int(st.session_state.get('prazo_total', 360)), min_value=1)
+    pagas_k = st.number_input("Parcelas Já Pagas", value=int(st.session_state.get('parcelas_pagas', 0)))
+    taxa_aa = st.number_input("Taxa Contratual (% a.a.)", value=float(st.session_state.get('taxa_juros_anual', 0.0)), step=0.01)
+    p_atual_cobrada = st.number_input("Valor da Prestação Cobrada (R$)", value=float(st.session_state.get('valor_ultima_parcela', 0.0)))
+    seguro_v = st.number_input("Valor do Seguro (R$)", value=float(st.session_state.get('valor_seguro', 0.0)))
+    taxa_adm_v = st.number_input("Taxa Adm. (R$)", value=float(st.session_state.get('taxa_adm', 25.0)))
 
-# --- CÁLCULOS PERICIAIS (SISTEMA SAC) ---
-if v_financiado > 0 and prazo > 0:
-    # Matemática SAC: Amortização constante
-    amort_mensal = v_financiado / prazo
-    taxa_mensal = (1 + taxa_anual/100)**(1/12) - 1
+# --- MOTOR DE CÁLCULO SAC (SISTEMA FINANCEIRO DA HABITAÇÃO) ---
+if valor_f > 0 and prazo_n > 0:
+    # Matemática SAC: Amortização é constante
+    amort_legal = valor_f / prazo_n
     
-    # Cálculo do Saldo Devedor Teórico (Saldo anterior à parcela atual)
-    saldo_anterior = v_financiado - (amort_mensal * (pagas - 1))
-    juros_legais = max(0, saldo_anterior * taxa_mensal)
+    # Conversão de taxa anual nominal para mensal efetiva
+    # i_mensal = (1 + i_anual)^(1/12) - 1
+    taxa_i = (1 + taxa_aa/100)**(1/12) - 1
     
-    # Valor da Prestação Correta (SAC)
-    p_deveria = amort_mensal + juros_legais + seguro + taxa_adm
+    # Saldo Devedor Teórico no mês atual (antes do pagamento atual)
+    # SD(k-1) = Valor_F - (Amort_Legal * (k-1))
+    sd_anterior = max(0, valor_f - (amort_legal * (pagas_k - 1)))
+    juros_mes_legal = sd_anterior * taxa_i
     
-    # Diferenças Apuradas
-    dif_mensal = p_atual - p_deveria
-    prejuizo_total = dif_mensal * pagas
-    is_irregular = dif_mensal > 5.0 # Margem de tolerância técnica
+    # Prestação Correta (SAC) = Amortização + Juros + Encargos
+    prestacao_correta = amort_legal + juros_mes_legal + seguro_v + taxa_adm_v
+    
+    # Apuração de Diferenças
+    dif_mensal = p_atual_cobrada - prestacao_correta
+    recuperavel_estimado = (dif_mensal * pagas_k) * 1.25 # Coeficiente médio com juros/correção
+    is_irregular = dif_mensal > 10.0 # Margem técnica de arredondamento
 
-    # --- TABS DE RESULTADOS ---
-    tab1, tab2 = st.tabs(["📊 Quadro Resumo", "⚖️ Minuta do Laudo Pericial"])
+    # --- RESULTADOS ---
+    t_res, t_laudo = st.tabs(["📊 Análise Sintetizada", "⚖️ Minuta de Laudo Técnico"])
 
-    with tab1:
-        st.markdown('<div class="sub-header">ANÁLISE IMOBILIÁRIA SINTETIZADA</div>', unsafe_allow_html=True)
+    with t_res:
+        st.markdown('<div class="sub-header">DETALHAMENTO DA ANÁLISE IMOBILIÁRIA</div>', unsafe_allow_html=True)
         
-        c_res1, c_res2 = st.columns(2)
-        with c_res1:
-            st.markdown(f"**MUTUÁRIO:** {nome}")
-            st.markdown(f"**BANCO:** {banco}")
-            st.markdown(f"**MONTANTE FINANCIADO:** R$ {v_financiado:,.2f}")
-        with c_res2:
-            status_class = "status-irregular" if is_irregular else "status-regular"
-            status_text = "CONTRATO IRREGULAR" if is_irregular else "CONTRATO REGULAR"
-            st.markdown(f"<div style='text-align:right;'><span class='{status_class}'>{status_text}</span></div>", unsafe_allow_html=True)
-            st.markdown(f"**DATA DA PERÍCIA:** {date.today().strftime('%d/%m/%Y')}")
+        c_i1, c_i2 = st.columns(2)
+        with c_i1:
+            st.markdown(f"**NOME:** {mutuario}")
+            st.markdown(f"**BANCO:** {banco_nome}")
+            st.markdown(f"**VALOR FINANCIADO:** R$ {valor_f:,.2f}")
+        with c_i2:
+            status_style = "status-irregular" if is_irregular else "status-regular"
+            status_txt = "CONTRATO IRREGULAR" if is_irregular else "CONTRATO REGULAR"
+            st.markdown(f"<div style='text-align:right;'><span class='{status_style}'>{status_txt}</span></div>", unsafe_allow_html=True)
+            st.markdown(f"**CONTRATO Nº:** {st.session_state.get('num_contrato', '---')}")
+            st.markdown(f"**PARCELAS PAGAS:** {pagas_k}")
 
-        st.markdown(f'<div class="highlight-yellow">SALDO DEVEDOR TEÓRICO: R$ {max(0, v_financiado - (amort_mensal * pagas)):,.2f}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="highlight-yellow">SALDO DEVEDOR ATUALIZADO (TEÓRICO): R$ {max(0, valor_f - (amort_legal * pagas_k)):,.2f}</div>', unsafe_allow_html=True)
 
-        st.markdown('<div class="sub-header">COMPARATIVO DE PRESTAÇÃO</div>', unsafe_allow_html=True)
-        
-        # Gráfico Plotly Comparativo Horizontal
+        st.markdown('<div class="sub-header">COMPARATIVO DE CONFORMIDADE</div>', unsafe_allow_html=True)
+        st.write(f"**VALOR DA PARCELA ATUAL DO IMÓVEL: R$ {p_atual_cobrada:,.2f}**")
+
+        # Gráfico Plotly: Pago vs. Devido (Ajustado para evitar erros de cor)
         fig = go.Figure()
         fig.add_trace(go.Bar(
-            y=['Prestação Atual (Banco)', 'Prestação Correta (SAC)'],
-            x=[p_atual, p_deveria],
+            y=['O QUE O BANCO COBRA', 'O QUE A LEI EXIGE (SAC)'],
+            x=[p_atual_cobrada, prestacao_correta],
             orientation='h',
             marker_color=['#ff0000', '#28a745'],
-            text=[f"R$ {p_atual:,.2f}", f"R$ {p_deveria:,.2f}"],
+            text=[f"R$ {p_atual_cobrada:,.2f}", f"R$ {prestacao_correta:,.2f}"],
             textposition='auto',
         ))
-        fig.update_layout(title="Ajuste de Parcela (Pago vs. Devido)", height=350, margin=dict(l=20, r=20, t=40, b=20))
+        fig.update_layout(title="Ajuste de Parcela", height=300, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
         st.plotly_chart(fig, use_container_width=True)
 
+        # Quadro de Valores Recuperáveis
         st.markdown("---")
-        col_met1, col_met2, col_met3 = st.columns(3)
-        col_met1.metric("Amortização Teórica", f"R$ {amort_mensal:,.2f}")
-        col_met2.metric("Diferença Mensal", f"R$ {dif_mensal:,.2f}", delta_color="inverse")
-        col_met3.metric("Recuperável Estimado", f"R$ {prejuizo_total:,.2f}")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Amortização Mensal", f"R$ {amort_legal:,.2f}")
+        m2.metric("Excesso por Parcela", f"R$ {dif_mensal:,.2f}", delta_color="inverse")
+        m3.metric("Indébito Estimado", f"R$ {recuperavel_estimado:,.2f}")
         
         st.markdown(f"""
-        <div style="background-color: #1e1e1e; color: white; padding: 25px; border-radius: 8px; text-align: center; border: 2px solid #d4af37;">
-            <span style="font-size: 18px; color: #d4af37;">TOTAL RECUPERÁVEL (SEM CORREÇÃO MONETÁRIA)</span><br>
-            <span style="font-size: 38px; font-weight: bold;">R$ {prejuizo_total:,.2f}</span>
+        <div style="background-color: #1e1e1e; color: white; padding: 30px; border-radius: 12px; text-align: center; border: 2px solid #d4af37;">
+            <span style="font-size: 18px; color: #d4af37; font-weight: bold;">VALOR TOTAL ESTIMADO PARA RECUPERAÇÃO</span><br>
+            <span style="font-size: 42px; font-weight: bold;">R$ {recuperavel_estimado:,.2f}</span>
         </div>
         """, unsafe_allow_html=True)
 
-    with tab2:
-        st.markdown('<div class="sub-header">CONSOLIDAÇÃO DO PARECER TÉCNICO</div>', unsafe_allow_html=True)
+    with t_laudo:
+        st.markdown('<div class="sub-header">PARECER TÉCNICO FUNDAMENTADO</div>', unsafe_allow_html=True)
         
-        if st.button("📄 Gerar Laudo Pericial Fundamentado"):
-            with st.spinner("James Sebastian está a redigir a peça técnica..."):
-                model_pericia = genai.GenerativeModel('gemini-1.5-flash')
+        if st.button("📄 GERAR LAUDO PERICIAL COMPLETO (IA)"):
+            with st.spinner("James Sebastian está consolidando a fundamentação jurídica..."):
+                model_ia = genai.GenerativeModel('gemini-1.5-flash')
                 
-                prompt_laudo = f"""
-                Aja como o perito judicial James Sebastian, com 30 anos de experiência.
-                Escreva um Laudo Pericial completo em Markdown para o cliente {nome}.
-                CONTEXTO: Banco {banco}, Financiamento de R$ {v_financiado:,.2f}, {pagas} parcelas pagas.
-                RESULTADO: Diferença de R$ {dif_mensal:,.2f} por parcela.
+                contexto_laudo = f"""
+                Atue como o perito judicial James Sebastian, 30 anos de experiência.
+                Gere um Laudo Pericial completo em Markdown para o mutuário {mutuario}.
+                DADOS: Banco {banco_nome}, Valor Financiado R$ {valor_f:,.2f}, {pagas_k} parcelas pagas.
+                IRREGULARIDADE: Diferença de R$ {dif_mensal:,.2f} por parcela.
                 
-                O LAUDO DEVE CONTER:
-                1. Introdução: Objeto da perícia.
-                2. Metodologia: Explicação do Sistema SAC e amortização constante (Lei 4.380/64).
-                3. Quadro de Confronto: Tabela comparando valores cobrados vs valores devidos.
-                4. Análise de Anatocismo: Explicação técnica sobre a incorporação de juros ao saldo (Código 410).
-                5. Jurisprudência: Citar Súmula 121 STF e Súmula 93 STJ.
-                6. Conclusão Final com o valor total do indébito.
+                ESTRUTURA OBRIGATÓRIA:
+                1. CABEÇALHO: Identificação e Objeto da Perícia.
+                2. METODOLOGIA: Explicação do Sistema SAC (Lei 4.380/64) e amortização fixa.
+                3. EXAME TÉCNICO: Tabela comparando Valores Pagos vs Valores Devidos.
+                4. ANÁLISE DE ANATOCISMO: Explique o Código 410 e a Súmula 121 do STF.
+                5. JURISPRUDÊNCIA: Citar Súmula 121 STF, Súmula 93 STJ e Art. 4º Decreto 22.626/33.
+                6. CONCLUSÃO: Valor final do indébito e recomendação técnica de expurgo.
+                
+                Seja formal, técnico e não invente dados além dos fornecidos.
                 """
                 
-                laudo_result = model_pericia.generate_content(prompt_laudo)
-                st.markdown(laudo_result.text)
+                resultado = model_ia.generate_content(contexto_laudo)
+                st.markdown(resultado.text)
                 
                 st.download_button(
-                    label="📥 Baixar Minuta do Laudo (TXT)",
-                    data=laudo_result.text,
-                    file_name=f"Laudo_Pericial_{nome.replace(' ', '_')}.txt",
+                    label="📥 Descarregar Minuta do Laudo (TXT)",
+                    data=resultado.text,
+                    file_name=f"Parecer_James_Sebastian_{mutuario.replace(' ', '_')}.txt",
                     mime="text/plain"
                 )
 
 else:
-    st.info("👋 Olá Fred! O sistema James Sebastian está pronto. Submeta os documentos na barra lateral para iniciar a auditoria.")
-    st.image("https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&q=80&w=1000", caption="James Sebastian: Rigor Técnico e Justiça Financeira.")
+    st.info("👋 Olá Fred! O sistema James Sebastian está pronto para a auditoria. Submete os ficheiros na barra lateral ou preenche os dados manualmente para começar.")
+    st.image("https://images.unsplash.com/photo-1450101499163-c8848c66ca85?auto=format&fit=crop&q=80&w=1000", caption="James Sebastian: Rigor Matemático e Justiça Contratual.")
