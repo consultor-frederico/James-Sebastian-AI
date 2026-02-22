@@ -96,7 +96,7 @@ def obter_indices_mercado():
     return data
 
 def motor_ocr_ia(ficheiros):
-    """Extração de dados via IA com foco em não-invenção"""
+    """Extração de dados via IA com lógica de cálculo de parcelas pagas"""
     if not GEMINI_API_KEY:
         st.error("Erro: API Key não configurada.")
         return None
@@ -104,8 +104,11 @@ def motor_ocr_ia(ficheiros):
         target_model = buscar_melhor_modelo()
         model = genai.GenerativeModel(target_model)
         
-        prompt = """Atue como James Sebastian. Extraia os dados para JSON. 
-        REGRAS: 1. Apenas JSON. 2. Se não encontrar o valor exato, use null. 3. Não invente.
+        prompt = """Atue como James Sebastian. Analise os documentos e extraia os dados para JSON. 
+        REGRAS ESPECÍFICAS DE CÁLCULO:
+        1. Localize o 'Prazo do Financiamento' (Prazo Total) e o 'Prazo Remanescente' (Faltante).
+        2. Calcule obrigatoriamente: pagas = prazo_total - prazo_remanescente.
+        3. Se não encontrar um valor, use null. NÃO INVENTE.
         JSON: {"nome": str, "banco": str, "contrato": str, "valor_original": float, "prazo": int, "pagas": int, "taxa_aa": float, "parcela_atual": float, "seguro": float, "taxa_adm": float}"""
         
         conteudo = [prompt]
@@ -145,6 +148,10 @@ st.caption(f"Actualização automática: {ind['data']}")
 with st.sidebar:
     st.markdown("<div style='text-align: center; padding-bottom: 20px;'><img src='https://cdn-icons-png.flaticon.com/512/3135/3135715.png' width='80'></div>", unsafe_allow_html=True)
     st.header("📂 1. Carga de Provas")
+    
+    # Mensagem de instrução solicitada por Fred
+    st.info("💡 IMPORTANTE: Para uma perícia precisa, anexe o Extrato de Evolução da Dívida desde o início do contrato.")
+    
     uploads = st.file_uploader("Upload de Documentos", accept_multiple_files=True)
     
     if uploads and st.button("🔍 Iniciar Leitura Inteligente"):
@@ -162,19 +169,17 @@ with st.sidebar:
     st.header("📝 2. Revisão Técnica")
     d = st.session_state.dados
     
-    # CAMPOS ABERTOS PARA INCLUSÃO MANUAL CASO A IA NÃO ENCONTRE
     nome = st.text_input("Mutuário", d['nome'])
     banco = st.text_input("Banco", d['banco'])
     contrato_num = st.text_input("Número do Contrato", d['contrato'])
     valor_orig = st.number_input("Valor Financiado (R$)", value=float(d['valor_original'] or 0.0), step=1000.0)
     prazo = st.number_input("Prazo Total (Meses)", value=int(d['prazo'] or 360), min_value=1)
-    pagas = st.number_input("Parcelas Pagas", value=int(d['pagas'] or 0))
+    pagas = st.number_input("Parcelas Pagas", value=int(d['pagas'] or 0), help="Cálculo automático: Prazo Total - Prazo Remanescente")
     taxa_aa = st.number_input("Taxa Nominal (% a.a.)", value=float(d['taxa_aa'] or 0.0), step=0.01)
     p_banco = st.number_input("Valor Parcela Atual (R$)", value=float(d['parcela_atual'] or 0.0))
     v_seguro = st.number_input("Seguro MIP/DFI (R$)", value=float(d['seguro'] or 0.0))
     v_taxa_adm = st.number_input("Taxa Adm (R$)", value=float(d['taxa_adm'] or 25.0))
 
-    # Sincroniza estado da sessão
     st.session_state.dados.update({
         'nome': nome, 'banco': banco, 'contrato': contrato_num, 'valor_original': valor_orig, 
         'prazo': prazo, 'pagas': pagas, 'taxa_aa': taxa_aa, 'parcela_atual': p_banco, 
@@ -186,7 +191,6 @@ if valor_orig > 0 and prazo > 0:
     amort_fixa = valor_orig / prazo
     i_mensal = (1 + taxa_aa/100)**(1/12) - 1
     
-    # Memória de Cálculo para o Advogado
     rows = []
     sd_teorico = valor_orig
     for m in range(1, pagas + 1):
@@ -216,13 +220,12 @@ if valor_orig > 0 and prazo > 0:
             st.write(f"**CLIENTE:** {nome}")
             st.write(f"**BANCO:** {banco}")
         with r2:
-            b_class = "status-irregular" if irregular else "status-regular"
-            txt_status = "CONTRATO IRREGULAR" if irregular else "CONTRATO REGULAR"
-            st.markdown(f"<div style='text-align:right;'><span class='status-badge {b_class}'>{txt_status}</span></div>", unsafe_allow_html=True)
+            badge = "status-irregular" if irregular else "status-regular"
+            texto = "CONTRATO IRREGULAR" if irregular else "CONTRATO REGULAR"
+            st.markdown(f"<div style='text-align:right;'><span class='status-badge {badge}'>{texto}</span></div>", unsafe_allow_html=True)
 
         st.markdown(f'<div class="highlight-yellow">SALDO DEVEDOR ATUALIZADO (LEI): R$ {max(0, sd_teorico):,.2f}</div>', unsafe_allow_html=True)
 
-        # GRÁFICO COMPARATIVO (SÓ APARECE APÓS A REVISÃO)
         st.markdown('<div class="sub-header">ANÁLISE VISUAL DE CONFORMIDADE (PAGO VS DEVIDO)</div>', unsafe_allow_html=True)
         fig = go.Figure()
         fig.add_trace(go.Bar(name='Pago ao Banco', x=['Prestação'], y=[p_banco], marker_color='#d32f2f', text=[f"R$ {p_banco:,.2f}"], textposition='auto'))
